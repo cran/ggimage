@@ -1,0 +1,9 @@
+a565adc956054e34c8986f6c12dcd1e0 *DESCRIPTION
+425e11b0198cae09c0646ee06b591212 *NAMESPACE
+8be10bf9a642687e3294d38004a76631 *R/geom_image.R
+9a777e0f21edb03cae269aaa006b3485 *build/vignette.rds
+d55dcefde3013166606a4f477292525e *inst/doc/ggimage.R
+b680372ea397597f9f8c06d969be9ec9 *inst/doc/ggimage.Rmd
+e4083948b45441b53c736a462a17e830 *inst/doc/ggimage.html
+605249de9bd3c4c4fd253f3a1ed704b8 *man/geom_image.Rd
+b680372ea397597f9f8c06d969be9ec9 *vignettes/ggimage.Rmd
