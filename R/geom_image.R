@@ -9,6 +9,7 @@
 ##' @param inherit.aes logical, whether inherit aes from ggplot()
 ##' @param na.rm logical, whether remove NA values
 ##' @param by one of 'width' or 'height'
+##' @param color specify the color of image. NULL for original color
 ##' @param ... additional parameters
 ##' @return geom layer
 ##' @importFrom ggplot2 layer
@@ -27,7 +28,7 @@
 ##' @author guangchuang yu
 geom_image <- function(mapping=NULL, data=NULL, stat="identity",
                        position="identity", inherit.aes=TRUE,
-                       na.rm=FALSE, by="width", ...) {
+                       na.rm=FALSE, by="width",  color=NULL, ...) {
 
     by <- match.arg(by, c("width", "height"))
 
@@ -42,6 +43,7 @@ geom_image <- function(mapping=NULL, data=NULL, stat="identity",
         params = list(
             na.rm = na.rm,
             by = by,
+            image_color = color,
             ...),
         check.aes = FALSE
     )
@@ -55,14 +57,25 @@ geom_image <- function(mapping=NULL, data=NULL, stat="identity",
 ##' @importFrom grid gTree
 ##' @importFrom grid gList
 GeomImage <- ggproto("GeomImage", Geom,
-                     draw_panel = function(data, panel_scales, coord, by, na.rm=FALSE) {
+                     draw_panel = function(data, panel_scales, coord, by, na.rm=FALSE,
+                                           image_color=NULL, alpha=1, geom="image", height) {
                          data <- coord$transform(data, panel_scales)
+
+                         if (geom == "pokemon") {
+                             data$image <- pokemon(data$image)
+                         } else if (geom == "phylopic") {
+                             data$image <- phylopic(data$image, height)
+                         } else if (geom == "flag") {
+                             data$image <- flag(data$image)
+                         } else if (geom == "emoji") {
+                             data$image <- emoji(data$image)
+                         }
 
                          groups <- split(data, factor(data$image))
                          imgs <- names(groups)
                          grobs <- lapply(seq_along(groups), function(i) {
                              data <- groups[[i]]
-                             imageGrob(data$x, data$y, data$size, imgs[i], by)
+                             imageGrob(data$x, data$y, data$size, imgs[i], by, image_color, alpha)
                          })
                          ggplot2:::ggname("geom_image",
                                           gTree(children = do.call("gList", grobs)))
@@ -74,14 +87,25 @@ GeomImage <- ggproto("GeomImage", Geom,
                      )
 
 ##' @importFrom EBImage readImage
+##' @importFrom EBImage channel
 ##' @importFrom grid rasterGrob
+##' @importFrom grDevices rgb
+##' @importFrom grDevices col2rgb
 ##' @importFrom methods is
-imageGrob <- function(x, y, size, img, by) {
+imageGrob <- function(x, y, size, img, by, color, alpha) {
     if (!is(img, "Image")) {
         img <- readImage(img)
         asp <- getAR(img)
     }
-    if (by == "width") {
+
+    unit <- "native"
+    if (any(size == Inf)) {
+        x <- 0.5
+        y <- 0.5
+        width <- 1
+        height <- 1
+        unit <- "npc"
+    } else if (by == "width") {
         width <- size
         height <- size/asp
     } else {
@@ -89,10 +113,23 @@ imageGrob <- function(x, y, size, img, by) {
         height <- size
     }
 
+    if (!is.null(color)) {
+        color <- col2rgb(color) / 255
+
+        img <- channel(img, 'rgb')
+        img[,,1] <- color[1]
+        img[,,2] <- color[2]
+        img[,,3] <- color[3]
+    }
+
+    if (dim(img)[3] >= 4) {
+        img[,,4] <- img[,,4]*alpha
+    }
+
     rasterGrob(x = x,
                y = y,
                image = img,
-               default.units = "native",
+               default.units = unit,
                height = height,
                width = width,
                interpolate = FALSE)
