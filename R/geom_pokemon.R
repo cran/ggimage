@@ -13,7 +13,7 @@
 ##' @author guangchuang yu
 geom_pokemon <- function(mapping=NULL, data=NULL, inherit.aes=TRUE,
                        na.rm=FALSE, by="width", ...) {
-    geom_image(mapping, data, inherit.aes=inherit.aes, na.rm=na.rm, ..., geom = 'pokemon')
+    geom_image(mapping, data, inherit.aes=inherit.aes, na.rm=na.rm, ..., .fun = pokemon)
 }
 
 pokemon <- function(id) {
@@ -28,8 +28,11 @@ pokemon <- function(id) {
 ##' @export
 ##' @author guangchuang yu
 list.pokemon <- function() {
-     x <- readLines("https://github.com/Templarian/slack-emoji-pokemon/tree/master/emojis")
-     y <- x[grep("title=\"\\w+\\.png", x)]
-     sub(".*title=\"(\\w+)\\.png.*", '\\1', y)
+    list.png("https://github.com/Templarian/slack-emoji-pokemon/tree/master/emojis")
 }
 
+list.png <- function(url) {
+    x <- readLines(url)
+    y <- x[grep("title=\"[a-zA-Z0-9\\-]+\\.png", x)]
+    sub(".*title=\"([a-zA-Z0-9\\-]+)\\.png.*", '\\1', y)
+}
