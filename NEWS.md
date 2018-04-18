@@ -1,3 +1,12 @@
+## ggimage 0.1.4
+
++ `ggbackground` for setting background image of ggplot (2018-04-18, Wed)
+
+## ggimage 0.1.3
+
++ `geom_image` now accepts `asp` parameter to adjust aspect ratio of images
+  (2018-03-22, Thu)
+
 ## ggimage 0.1.2
 
 + mv code in `toGrob` for base plot to `base2grob` pkg
