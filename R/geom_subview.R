@@ -13,6 +13,7 @@
 ##' @importFrom ggplot2 annotation_custom
 ##' @importFrom ggplot2 aes_
 ##' @importFrom tibble as_data_frame
+##' @importFrom ggplotify as.grob
 ## @importFrom grid convertUnit
 ## @importFrom grid viewport
 ## @importFrom grid pushViewport
@@ -50,22 +51,25 @@ geom_subview <- function(mapping = NULL, data = NULL, width=.1, height=.1, x = N
         }
         data$subview <- subview
     } else {
-        data$subview <- data[[as.character(mapping$subview)]]
+        sv_var <- get_aes_var(mapping, 'subview')
+        data$subview <- data[[sv_var]]
     }
 
-    xvar <- as.character(mapping$x)
-    yvar <- as.character(mapping$y)
+    xvar <- get_aes_var(mapping, 'x')
+    yvar <- get_aes_var(mapping, 'y')
 
     if (is.null(mapping$width)) {
         data$width <- width
     } else {
-        data$width <- data[[as.character(mapping$width)]]
+        width_var <- get_aes_var(mapping, 'width')
+        data$width <- data[[width_var]]
     }
 
     if (is.null(mapping$height)) {
         data$height <- height
     } else {
-        data$height <- data[[as.character(mapping$height)]]
+        height_var <- get_aes_var(mapping, 'height')
+        data$height <- data[[height_var]]
     }
 
 
@@ -76,7 +80,7 @@ geom_subview <- function(mapping = NULL, data = NULL, width=.1, height=.1, x = N
 
     lapply(1:nrow(data), function(i) {
         annotation_custom(
-            toGrob(data$subview[[i]]),
+            as.grob(data$subview[[i]]),
             xmin = data$xmin[i],
             xmax = data$xmax[i],
             ymin = data$ymin[i],
@@ -84,38 +88,12 @@ geom_subview <- function(mapping = NULL, data = NULL, width=.1, height=.1, x = N
     })
 }
 
-##' @importFrom base2grob base2grob
-toGrob <- function(subview) {
-    if (inherits(subview, "expression") ||
-        inherits(subview, "formula") ||
-        inherits(subview, "function")) {
-
-        subview <- base2grob(subview)
-    }
-    return(toGrob_(subview))
-}
-
-
-##' @importFrom ggplot2 ggplotGrob
-##' @importFrom rvcheck get_fun_from_pkg
-toGrob_ <- function(subview) {
-    if (inherits(subview, "ggplot")) {
-        sv <- ggplotGrob(subview)
-    } else if (inherits(subview, "meme")) {
-        memeGrob <- get_fun_from_pkg("meme", "memeGrob")
-        sv <- memeGrob(subview)
-    } else if (inherits(subview, "trellis")) {
-        sv <- grid::grid.grabExpr(print(subview))
-    } else if (inherits(subview, "grob")) {
-        sv <- subview
-    } else {
-        return(NULL)
-    }
-    return(sv)
-}
-
-
-
 
 unit <- grid::unit
 
+##' @importFrom utils tail
+get_aes_var <- function(mapping, var) {
+    res <- as.character(mapping[[var]])
+    ## to compatible with ggplot2 v=2.2.2
+    tail(res, 1)
+}
