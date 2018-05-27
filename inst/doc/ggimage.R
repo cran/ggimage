@@ -57,7 +57,7 @@ p + geom_flag(y = -2, aes(image = code)) +
     scale_fill_manual(values = c("Gold" = "gold", "Bronze" = "#cd7f32", "Silver" = "#C0C0C0"))
 
 ## ------------------------------------------------------------------------
-d$icon=sample(c('power', 'wifi', 'pie-graph', 'usb'), 10, replace=TRUE)
+d$icon=sample(c('ios-power', 'ios-wifi', 'ios-pie'), 10, replace=TRUE)
 ggplot(d, aes(x,y)) + geom_icon(aes(image=icon))
 
 ## ------------------------------------------------------------------------
