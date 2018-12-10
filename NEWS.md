@@ -1,3 +1,16 @@
+## ggimage 0.2.0
+
++ `draw_key_image` that draws key of image colors using `rectGrob` (2018-12-10, Mon)
++ support `aes(color)` 
++ compatible with ggplot2 v3.1.0
+
+## ggimage 0.1.8
+
++ support `pdf` file (2018-12-03, Mon)
++ support `svg` file
+  - <https://github.com/GuangchuangYu/ggimage/issues/11>
++ `geom_twitchemote` layer
+
 ## ggimage 0.1.7
 
 + `geom_worldcup2018` layer (2018-06-19, Tue)

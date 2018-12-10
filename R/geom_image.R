@@ -14,7 +14,6 @@ geom_ggtree_image <- function() {
 ##' @param inherit.aes logical, whether inherit aes from ggplot()
 ##' @param na.rm logical, whether remove NA values
 ##' @param by one of 'width' or 'height'
-##' @param color specify the color of image. NULL for original color
 ##' @param nudge_x horizontal adjustment to nudge image
 ##' @param angle angle of image
 ##' @param ... additional parameters
@@ -35,7 +34,7 @@ geom_ggtree_image <- function() {
 ##' @author guangchuang yu
 geom_image <- function(mapping=NULL, data=NULL, stat="identity",
                        position="identity", inherit.aes=TRUE,
-                       na.rm=FALSE, by="width", color=NULL, nudge_x = 0, angle = 0, ...) {
+                       na.rm=FALSE, by="width", nudge_x = 0, angle = 0, ...) {
 
     by <- match.arg(by, c("width", "height"))
 
@@ -50,7 +49,6 @@ geom_image <- function(mapping=NULL, data=NULL, stat="identity",
         params = list(
             na.rm = na.rm,
             by = by,
-            image_color = color,
             nudge_x = nudge_x,
             angle = angle,
             ...),
@@ -72,12 +70,15 @@ GeomImage <- ggproto("GeomImage", Geom,
                          data[which(data$subset),]
                      },
 
-                     draw_panel = function(data, panel_scales, coord, by, na.rm=FALSE,
-                                           image_color=NULL, alpha=1, .fun = NULL, height, image_fun = NULL,
+                     default_aes = aes(image="https://www.r-project.org/logo/Rlogo.png",
+                                       size=0.05, colour = NULL),
+
+                     draw_panel = function(data, panel_params, coord, by, na.rm=FALSE,
+                                           alpha=1, .fun = NULL, height, image_fun = NULL,
                                            hjust=0.5, angle = 0, nudge_x = 0, nudge_y = 0, asp=1) {
                          data$x <- data$x + nudge_x
                          data$y <- data$y + nudge_y
-                         data <- coord$transform(data, panel_scales)
+                         data <- coord$transform(data, panel_params)
 
 
                          if (!is.null(.fun) && is.function(.fun))
@@ -87,7 +88,21 @@ GeomImage <- ggproto("GeomImage", Geom,
                          imgs <- names(groups)
                          grobs <- lapply(seq_along(groups), function(i) {
                              data <- groups[[i]]
-                             imageGrob(data$x, data$y, data$size, imgs[i], by, hjust, image_color, alpha, image_fun, angle, asp)
+                             if (is.null(data$colour) || length(unique(data$colour)) == 1) {
+                                 tmpgrobs <- imageGrob(data$x, data$y, data$size, imgs[i], by, hjust,
+                                                       data$colour, alpha, image_fun, angle, asp)
+                             } else {
+                                 groups2 <- split(data, factor(data$colour))
+                                 tmpgrobs <- lapply(seq_along(groups2), function(i) {
+                                     data <- groups2[[i]]
+                                     imageGrob(data$x, data$y, data$size, data$image[1], by, hjust,
+                                               data$colour, alpha, image_fun, angle, asp)
+                                 })
+                                 class(tmpgrobs) <- "gList"
+                                 tmpgrobs <- gTree(children = tmpgrobs, name = "tmpgrobs")
+                             }
+
+                             return(tmpgrobs)
                          })
                          class(grobs) <- "gList"
 
@@ -96,21 +111,29 @@ GeomImage <- ggproto("GeomImage", Geom,
                      },
                      non_missing_aes = c("size", "image"),
                      required_aes = c("x", "y"),
-                     default_aes = aes(size=0.05, image="https://www.r-project.org/logo/Rlogo.png"),
-                     draw_key = draw_key_blank ## need to write the `draw_key_image` function.
+                     draw_key = draw_key_image ## draw_key_blank ## need to write the `draw_key_image` function.
                      )
 
 
 ##' @importFrom magick image_read
+##' @importFrom magick image_read_svg
+##' @importFrom magick image_read_pdf
 ##' @importFrom magick image_colorize
 ##' @importFrom grid rasterGrob
 ##' @importFrom grid viewport
 ##' @importFrom grDevices rgb
 ##' @importFrom grDevices col2rgb
 ##' @importFrom methods is
-imageGrob <- function(x, y, size, img, by, hjust, color, alpha, image_fun, angle, asp=1) {
+##' @importFrom tools file_ext
+imageGrob <- function(x, y, size, img, by, hjust, colour, alpha, image_fun, angle, asp=1) {
     if (!is(img, "magick-image")) {
-        img <- image_read(img)
+        if (tools::file_ext(img) == "svg") {
+            img <- image_read_svg(img)
+        } else if (tools::file_ext(img) == "pdf") {
+            img <- image_read_pdf(img)
+        } else {
+            img <- image_read(img)
+        }
         asp <- getAR2(img)/asp
     }
 
@@ -139,10 +162,10 @@ imageGrob <- function(x, y, size, img, by, hjust, color, alpha, image_fun, angle
         img <- image_fun(img)
     }
 
-    if (!is.null(color) || alpha != 1) {
+    if (!is.null(colour) || alpha != 1) {
         bitmap <- img[[1]]
-        if (!is.null(color)) {
-            col <- col2rgb(color)
+        if (!is.null(colour)) {
+            col <- col2rgb(colour)
             bitmap[1,,] <- as.raw(col[1])
             bitmap[2,,] <- as.raw(col[2])
             bitmap[3,,] <- as.raw(col[3])
@@ -176,7 +199,7 @@ compute_just <- getFromNamespace("compute_just", "ggplot2")
 
 ## @importFrom EBImage readImage
 ## @importFrom EBImage channel
-## imageGrob2 <- function(x, y, size, img, by, color, alpha) {
+## imageGrob2 <- function(x, y, size, img, by, colour, alpha) {
 ##     if (!is(img, "Image")) {
 ##         img <- readImage(img)
 ##         asp <- getAR(img)
@@ -197,13 +220,13 @@ compute_just <- getFromNamespace("compute_just", "ggplot2")
 ##         height <- size
 ##     }
 
-##     if (!is.null(color)) {
-##         color <- col2rgb(color) / 255
+##     if (!is.null(colour)) {
+##         color <- col2rgb(colour) / 255
 
 ##         img <- channel(img, 'rgb')
-##         img[,,1] <- color[1]
-##         img[,,2] <- color[2]
-##         img[,,3] <- color[3]
+##         img[,,1] <- colour[1]
+##         img[,,2] <- colour[2]
+##         img[,,3] <- colour[3]
 ##     }
 
 ##     if (dim(img)[3] >= 4) {
