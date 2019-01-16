@@ -44,10 +44,6 @@ ggplot(iris2, aes(x = Sepal.Length, y = Petal.Length)) +
     geom_emoji(aes(image = ifelse(abs(Petal.Length-fitted) > 0.5, '1f622', '1f600')))
 
 ## ------------------------------------------------------------------------
-ggplot(d, aes(x, y)) + geom_phylopic(image = "500bd7c6-71c1-4b86-8e54-55f72ad1beca", size = .1) +
-    geom_phylopic(image="0174801d-15a6-4668-bfe0-4c421fbe51e8", size=Inf, alpha=.6, color='steelblue')
-
-## ------------------------------------------------------------------------
 f <- system.file("extdata/medals.txt", package="ggimage")
 medals <- read.table(f, header=TRUE)
 p <- ggplot(medals, aes(Country, count)) + geom_col(aes(fill = medal), width = .8)
