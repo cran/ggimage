@@ -1,12 +1,12 @@
-7025b5e795c7853d2b173e983c3c1935 *DESCRIPTION
+eadba56f60c2a0bb94247fd6f4191454 *DESCRIPTION
 ec55e735332db71d1534cf50861048f7 *NAMESPACE
-1913e4e1cff5510586f2d15bfc247a0a *NEWS.md
+e453f8f139b72be5ccb22a2497b08eee *NEWS.md
 86ced8e0079e403b4189aa1d34b5ebf7 *R/color_image.R
 34022971e084797a041a40ba8153abee *R/draw_key.R
 d5240adaba1001db96921f28eb3e65a8 *R/geom_bgimage.R
 360554c8a271d85966548ebc2b1b95f0 *R/geom_emoji.R
 d33fc91c5c505c9b4b6b88067076daf8 *R/geom_flag.R
-9713e7a403108db842357f0e570ef2b9 *R/geom_icon.R
+ce1780fa21f06913616cd066500cb0d0 *R/geom_icon.R
 5244baff6e6d378c5a941e8087025a1b *R/geom_image.R
 9249029fb6140493c8e5349ecefbcdba *R/geom_phylopic.R
 ffc9a7f085332291d3642f9875a6eb2a *R/geom_pokemon.R
@@ -16,11 +16,10 @@ bccc771b41e23273a7b4c4c496cbb588 *R/geom_subview.R
 b424944dd3825a6cb6a7491ebb98d17f *R/image_read2.R
 5e75d93e9840e6f07205f9829ee82caa *R/reexport.R
 ec0b4364b67c5645b97318cf1a2d189b *R/theme.R
-59fac95ca8326cc3bfc0ab9f0913f7ad *README.md
 2f9647c5b821ac215841bddae390c9ef *build/vignette.rds
 9e95d76e07a710b986ef7e5e3f160581 *inst/doc/ggimage.R
-940701becf7b61539974a524d966fd7d *inst/doc/ggimage.Rmd
-463331d652b6f828c6256b6bb3a3067c *inst/doc/ggimage.html
+f9c70ba52230156aa9f19025c5ec0a37 *inst/doc/ggimage.Rmd
+12ffc0e8bd81292dad1b7c374abfa9da *inst/doc/ggimage.html
 909182496548f832840b6c43ef4fb5f7 *inst/extdata/Rlogo.png
 754b310c87c275e3f6c6db769ec80ce2 *inst/extdata/medals.txt
 20c9c187778ff6c6e4b94e1b7a935b44 *man/draw_key.Rd
@@ -44,4 +43,4 @@ a73d94ae9235065eba1fca123b5084fc *man/list.pokemon.Rd
 7276d18237ae35af197d4f9675677fcc *man/reexports.Rd
 5aa9272b7c64fb40bd12814365c7558c *man/theme_nothing.Rd
 921b394eb9bc092e3caee8ba11f99546 *man/theme_transparent.Rd
-940701becf7b61539974a524d966fd7d *vignettes/ggimage.Rmd
+f9c70ba52230156aa9f19025c5ec0a37 *vignettes/ggimage.Rmd
