@@ -30,7 +30,7 @@ geom_ggtree_image <- function() {
 ##'                               size=10, replace = TRUE)
 ##'                )
 ##' ggplot(d, aes(x, y)) + geom_image(aes(image=image))
-##' @author guangchuang yu
+##' @author Guangchuang Yu
 geom_image <- function(mapping=NULL, data=NULL, stat="identity",
                        position="identity", inherit.aes=TRUE,
                        na.rm=FALSE, by="width", nudge_x = 0, ...) {
@@ -79,8 +79,10 @@ GeomImage <- ggproto("GeomImage", Geom,
                          data$y <- data$y + nudge_y
                          data <- coord$transform(data, panel_params)
 
-                         if (!is.null(.fun) && is.function(.fun))
+                         if (!is.null(.fun) && is.function(.fun)) {
                              data$image <- .fun(data$image)
+                         }
+
 
                          groups <- split(data, factor(data$image))
                          imgs <- names(groups)
@@ -93,7 +95,7 @@ GeomImage <- ggproto("GeomImage", Geom,
                          class(grobs) <- "gList"
                          
                          ggname("geom_image",
-                                gTree(children = grobs))
+                                gTree(children = grobs, cl = "fixasp_raster"))
                      },
                      non_missing_aes = c("size", "image"),
                      required_aes = c("x", "y"),
@@ -121,6 +123,7 @@ imageGrob <- function(x, y, size, img, by, hjust, colour, alpha, image_fun, angl
         } else {
             img <- image_read(img)
         }
+
         asp <- getAR2(img)/asp
     }
 
@@ -133,7 +136,7 @@ imageGrob <- function(x, y, size, img, by, hjust, colour, alpha, image_fun, angl
         unit <- "npc"
     } else if (by == "width") {
         width <- size
-        height <- size/asp
+        height <- size / asp
     } else {
         width <- size * asp
         height <- size
@@ -184,6 +187,27 @@ imageGrob <- function(x, y, size, img, by, hjust, colour, alpha, image_fun, angl
     return(grobs)
 }
 
+##' @importFrom grid makeContent
+##' @importFrom grid convertHeight
+##' @importFrom grid convertWidth
+##' @importFrom grid unit
+##' @method makeContent fixasp_raster
+##' @export
+makeContent.fixasp_raster <- function(x) {
+    ## reference https://stackoverflow.com/questions/58165226/is-it-possible-to-plot-images-in-a-ggplot2-plot-that-dont-get-distorted-when-y?noredirect=1#comment102713437_58165226
+
+    ## Convert from relative units to absolute units
+    children <- x$children
+    for (i in seq_along(children)) {
+        y <- children[[i]]
+        h <- convertHeight(y$height, "cm", valueOnly = TRUE)
+        w <- convertWidth(y$width, "cm", valueOnly = TRUE)
+        ## Decide how the units should be equal
+        y$width <- y$height <- unit(sqrt(h * w), "cm")
+        x$children[[i]] <- y
+    }
+    x
+}
 
 ##' @importFrom magick image_info
 getAR2 <- function(magick_image) {
