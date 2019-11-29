@@ -1,14 +1,13 @@
-27ba846bbe5074b35b0939cac198805e *DESCRIPTION
+9f0f65bb964f0ce1d07e083e927f82df *DESCRIPTION
 e9e2c1e2fd64d038ae1dca99429dcfb6 *NAMESPACE
-40f859e6897c9be7a95c12e71eb71d57 *NEWS.md
 86ced8e0079e403b4189aa1d34b5ebf7 *R/color_image.R
 34022971e084797a041a40ba8153abee *R/draw_key.R
 d5240adaba1001db96921f28eb3e65a8 *R/geom_bgimage.R
 360554c8a271d85966548ebc2b1b95f0 *R/geom_emoji.R
-d33fc91c5c505c9b4b6b88067076daf8 *R/geom_flag.R
+f417b0152b916b34d6106ddd1903b312 *R/geom_flag.R
 ce1780fa21f06913616cd066500cb0d0 *R/geom_icon.R
 79c5b8a3cafbc454f58a46a0fd8408bf *R/geom_image.R
-d3aecd683b1311ae56fd2fcc8767fff0 *R/geom_phylopic.R
+68159fd861f41bf61edba6d34df7bb70 *R/geom_phylopic.R
 ffc9a7f085332291d3642f9875a6eb2a *R/geom_pokemon.R
 bccc771b41e23273a7b4c4c496cbb588 *R/geom_subview.R
 580990e1fa44e10cb9bce2096620c44d *R/geom_twitchemote.R
@@ -19,7 +18,7 @@ ec0b4364b67c5645b97318cf1a2d189b *R/theme.R
 2f9647c5b821ac215841bddae390c9ef *build/vignette.rds
 9e95d76e07a710b986ef7e5e3f160581 *inst/doc/ggimage.R
 f9c70ba52230156aa9f19025c5ec0a37 *inst/doc/ggimage.Rmd
-8d6d21a0161a94998b4b812ecdfc7e52 *inst/doc/ggimage.html
+f189c3e0061c3f3b2a9f70fa56da9605 *inst/doc/ggimage.html
 909182496548f832840b6c43ef4fb5f7 *inst/extdata/Rlogo.png
 754b310c87c275e3f6c6db769ec80ce2 *inst/extdata/medals.txt
 20c9c187778ff6c6e4b94e1b7a935b44 *man/draw_key.Rd
