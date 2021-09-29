@@ -1,5 +1,5 @@
-01d6753886c584a6cbb233b8badda799 *DESCRIPTION
-503768777fd2138afd0990aafe06fa5b *NAMESPACE
+91df4f1507915998dc7daf3c1fcc4a5b *DESCRIPTION
+3f9f4845ea1be52c8b704143469cf953 *NAMESPACE
 86ced8e0079e403b4189aa1d34b5ebf7 *R/color_image.R
 34022971e084797a041a40ba8153abee *R/draw_key.R
 d5240adaba1001db96921f28eb3e65a8 *R/geom_bgimage.R
@@ -7,7 +7,7 @@ d26354fc5162635d87f76a4f592da5eb *R/geom_emoji.R
 c2d95619bff0128d3b0692db3f88954e *R/geom_flag.R
 12b36ea63a65b9de6db3193cff1b48d8 *R/geom_icon.R
 1d64b7a1c0fb470146e4d9d70284c03e *R/geom_image.R
-d55670f06947ca1fbb73e4bac93182f1 *R/geom_phylopic.R
+41a1c1d35524a7f6844ff42dcb00fd72 *R/geom_phylopic.R
 76b426edb6fa8819f4319886682bac04 *R/geom_pokemon.R
 9ee0ef8cc1f73a823c2c41c951ca1f14 *R/geom_subview.R
 16ce18ce52f965c642f48c7dc333abe4 *R/geom_twitchemote.R
@@ -15,10 +15,11 @@ d55670f06947ca1fbb73e4bac93182f1 *R/geom_phylopic.R
 b424944dd3825a6cb6a7491ebb98d17f *R/image_read2.R
 5e75d93e9840e6f07205f9829ee82caa *R/reexport.R
 ec0b4364b67c5645b97318cf1a2d189b *R/theme.R
-c67ce90b66591d9ac65a22919945ae93 *R/utilities.R
+40b6ace8280349eb04b79fbea93c59b1 *R/utilities.R
 909182496548f832840b6c43ef4fb5f7 *inst/extdata/Rlogo.png
 bfff65f24ab1686d2ba34bd0096b896d *inst/extdata/bulb.png
 754b310c87c275e3f6c6db769ec80ce2 *inst/extdata/medals.txt
+449bdd66933fcd21f4c5aeeef51c032c *man/download_phylopic.Rd
 20c9c187778ff6c6e4b94e1b7a935b44 *man/draw_key.Rd
 5fb529de4ad2d58b5332fae75b977968 *man/geom_bgimage.Rd
 0e35933cfa8eb8cb2d16f658bd95a0d1 *man/geom_emoji.Rd
