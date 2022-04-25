@@ -1,10 +1,10 @@
-91df4f1507915998dc7daf3c1fcc4a5b *DESCRIPTION
+89cfd91dbbb5d31e8e95968663f21f44 *DESCRIPTION
 3f9f4845ea1be52c8b704143469cf953 *NAMESPACE
 86ced8e0079e403b4189aa1d34b5ebf7 *R/color_image.R
 34022971e084797a041a40ba8153abee *R/draw_key.R
 d5240adaba1001db96921f28eb3e65a8 *R/geom_bgimage.R
 d26354fc5162635d87f76a4f592da5eb *R/geom_emoji.R
-c2d95619bff0128d3b0692db3f88954e *R/geom_flag.R
+b0f18fc3ebf1e1e66bff46c38bd2fb7f *R/geom_flag.R
 12b36ea63a65b9de6db3193cff1b48d8 *R/geom_icon.R
 1d64b7a1c0fb470146e4d9d70284c03e *R/geom_image.R
 41a1c1d35524a7f6844ff42dcb00fd72 *R/geom_phylopic.R
