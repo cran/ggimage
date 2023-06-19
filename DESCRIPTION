@@ -1,6 +1,6 @@
 Package: ggimage
 Title: Use Image in 'ggplot2'
-Version: 0.3.2
+Version: 0.3.3
 Authors@R: person("Guangchuang", "Yu",
                   email = "guangchuangyu@gmail.com",
                   role = c("aut", "cre"),
@@ -19,8 +19,8 @@ BugReports: https://github.com/GuangchuangYu/ggimage/issues
 Encoding: UTF-8
 RoxygenNote: 7.2.3
 NeedsCompilation: no
-Packaged: 2023-04-02 09:09:17 UTC; HUAWEI
+Packaged: 2023-06-19 03:36:56 UTC; HUAWEI
 Author: Guangchuang Yu [aut, cre] (<https://orcid.org/0000-0002-6485-8781>)
 Maintainer: Guangchuang Yu <guangchuangyu@gmail.com>
 Repository: CRAN
-Date/Publication: 2023-04-02 09:50:02 UTC
+Date/Publication: 2023-06-19 04:10:02 UTC
