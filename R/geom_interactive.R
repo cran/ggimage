@@ -4,6 +4,23 @@
 #' See the documentation for those functions for more details.
 #' @param ... see also the parameters of `geom_image()` of `ggimage`
 #' @export
+#' @examples
+#' \dontrun{
+#' library("ggplot2")
+#' library("ggimage")
+#' library("ggiraph")
+#' set.seed(2017-02-21)
+#' d <- data.frame(x = rnorm(10),
+#'                 y = rnorm(10),
+#'                 image = sample(c("https://www.r-project.org/logo/Rlogo.png",
+#'                                 "https://jeroenooms.github.io/images/frink.png"),
+#'                               size=10, replace = TRUE)
+#'                )
+#' d$id <- sample(10)
+#' p <- ggplot(d, aes(x, y)) + 
+#'      geom_image_interactive(aes(image=image, tooltip = id, data_id = id))
+#' girafe(ggobj = p)
+#' }
 geom_image_interactive <- function(...){
   # rlang::check_installed(c('ggiraph'), "for `geom_image_interactive()`.")
   layer_interactive(geom_image, interactive_geom = GeomInteractiveImage,...)
@@ -58,8 +75,14 @@ GeomInteractiveImage <- ggproto(
                         nudge_x = 0, 
                         nudge_y = 0,
                         asp = 1,
+                        use_cache = TRUE,
                         .ipar = IPAR_NAMES
                         ){
+    if (!.check_ipar_params(data)){
+        return(GeomImage$draw_panel(data, panel_params, coord, by, na.rm, 
+                                    .fun, image_fun, hjust, nudge_x, nudge_y, asp)
+        )
+    }
     data <- GeomImage$make_image_data(data, panel_params, coord, .fun, nudge_x, nudge_y) 
     adjs <- GeomImage$build_adjust(data, panel_params, by)
     grobs <- lapply(seq_len(nrow(data)), function(i){
@@ -68,13 +91,14 @@ GeomInteractiveImage <- ggproto(
                    size = data$size[i],
                    img = data$image[i],
                    colour = data$colour[i],
-                   alpha = data$alpha[i],
+                   opacity = data$alpha[i],
                    angle = data$angle[i],
                    adj = adjs[i],
                    image_fun = image_fun,
                    hjust = hjust,
                    by = by,
-                   asp = asp
+                   asp = asp,
+                   use_cache = use_cache
          )
          gb <- add_interactive_attrs(gb, data[i,], ipar=.ipar)
          return(gb)
@@ -83,3 +107,6 @@ GeomInteractiveImage <- ggproto(
   }
 )
 
+.check_ipar_params <- function(x){
+  any(colnames(x) %in% IPAR_NAMES)
+}
