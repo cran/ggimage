@@ -76,15 +76,34 @@ GeomInteractiveImage <- ggproto(
                         nudge_y = 0,
                         asp = 1,
                         use_cache = TRUE,
+                        width = NULL,
+                        height = NULL,
                         .ipar = IPAR_NAMES
                         ){
     if (!.check_ipar_params(data)){
-        return(GeomImage$draw_panel(data, panel_params, coord, by, na.rm, 
-                                    .fun, image_fun, hjust, nudge_x, nudge_y, asp)
+        return(GeomImage$draw_panel(data, panel_params, coord, by, na.rm,
+                                    .fun, image_fun, hjust, nudge_x, nudge_y,
+                                    asp, use_cache, width, height)
         )
     }
-    data <- GeomImage$make_image_data(data, panel_params, coord, .fun, nudge_x, nudge_y) 
+    data <- GeomImage$make_image_data(data, panel_params, coord, .fun, nudge_x, nudge_y)
+    widths <- resolve_image_dimension(
+      if ("width" %in% names(data)) data$width else NULL, width, nrow(data)
+    )
+    heights <- resolve_image_dimension(
+      if ("height" %in% names(data)) data$height else NULL, height, nrow(data)
+    )
+    image_fun_key <- if (use_cache) image_fun_cache_key(image_fun) else NULL
     adjs <- GeomImage$build_adjust(data, panel_params, by)
+    prepared_images <- prepare_image_batch(
+      img = data$image,
+      colour = if ("colour" %in% names(data)) data$colour else NULL,
+      opacity = if ("alpha" %in% names(data)) data$alpha else 1,
+      angle = if ("angle" %in% names(data)) data$angle else 0,
+      image_fun = image_fun,
+      use_cache = use_cache,
+      image_fun_key = image_fun_key
+    )
     grobs <- lapply(seq_len(nrow(data)), function(i){
          gb <- imageGrob(x = data$x[i],
                    y = data$y[i],
@@ -95,10 +114,15 @@ GeomInteractiveImage <- ggproto(
                    angle = data$angle[i],
                    adj = adjs[i],
                    image_fun = image_fun,
+                    image_fun_key = image_fun_key,
                    hjust = hjust,
                    by = by,
                    asp = asp,
-                   use_cache = use_cache
+                   use_cache = use_cache,
+                    width = widths[i],
+                    height = heights[i],
+                   prepared_image = prepared_images[[i]],
+                   prepared = TRUE
          )
          gb <- add_interactive_attrs(gb, data[i,], ipar=.ipar)
          return(gb)

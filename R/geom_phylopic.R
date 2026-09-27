@@ -22,19 +22,113 @@ geom_phylopic <- function(mapping=NULL, data=NULL, inherit.aes=TRUE,
 ##' @param id phylopic id
 ##' @param destdir directory where the downloaded images are to be saved.
 ##' @param ... additional parameters passed to download.file
+##' @param reuse whether to reuse existing non-empty regular files
+##' @param lock_timeout maximum seconds to wait for a concurrent download lock
+##' @param lock_poll seconds between lock acquisition attempts
 ##' @return a character string (or vector) with downloaded file path
 ##' @importFrom utils download.file
 ##' @export
 ##' @author Guangchuang Yu
-download_phylopic <- function(id, destdir = ".", ...) {
+download_phylopic <- function(id, destdir = ".", ..., reuse = TRUE,
+                              lock_timeout = getOption(
+                                  "ggimage.phylopic_lock_timeout", 30),
+                              lock_poll = getOption(
+                                  "ggimage.phylopic_lock_poll", 0.05)) {
     url <- phylopic(id)
     n <- basename(url)
-    destfile <- paste0(destdir, '/', id, n)
+    destfile <- rep(NA_character_, length(url))
+    names(destfile) <- names(url)
 
-    for (i in seq_along(url)) {
-        utils::download.file(url[i], destfile[i], ...)
+    valid <- !is.na(url) & nzchar(url)
+    destfile[valid] <- paste0(destdir, '/', id[valid], n[valid])
+    pending <- which(valid)
+    if (!length(pending)) return(invisible(destfile))
+
+    reuse <- isTRUE(reuse)
+    lock_timeout <- suppressWarnings(as.numeric(lock_timeout)[1L])
+    if (length(lock_timeout) != 1L || is.na(lock_timeout) ||
+        !is.finite(lock_timeout) || lock_timeout < 0) lock_timeout <- 30
+    lock_timeout <- min(lock_timeout, 300)
+    lock_poll <- suppressWarnings(as.numeric(lock_poll)[1L])
+    if (length(lock_poll) != 1L || is.na(lock_poll) ||
+        !is.finite(lock_poll) || lock_poll <= 0) lock_poll <- 0.05
+    lock_poll <- min(lock_poll, 1)
+
+    ## Duplicate input IDs can point to the same destination.  Download each
+    ## destination at most once, without introducing parallel network calls.
+    pending <- pending[!duplicated(destfile[pending])]
+    for (i in pending) {
+        target <- destfile[[i]]
+        parent <- dirname(target)
+        if (!dir.exists(parent)) {
+            stop("Phylopic download directory does not exist: ", parent,
+                 call. = FALSE)
+        }
+        lockdir <- paste0(target, ".lock")
+        acquired <- .phylopic_lock_acquire(lockdir, lock_timeout, lock_poll)
+        if (!acquired) {
+            if (reuse && .phylopic_regular_file(target)) next
+            stop("timed out waiting for Phylopic download lock: ", target,
+                 call. = FALSE)
+        }
+
+        tryCatch({
+            ## Check again after acquiring the lock.  A peer may have completed
+            ## the file while this call was waiting.
+            if (reuse && .phylopic_regular_file(target)) next
+            if (file.exists(target) && isTRUE(file.info(target)$isdir)) {
+                stop("Phylopic download target is a directory: ", target,
+                     call. = FALSE)
+            }
+
+            temp <- tempfile(
+                pattern = paste0(".", basename(target), "-"),
+                tmpdir = parent
+            )
+            on.exit(unlink(temp, force = TRUE), add = TRUE)
+            .phylopic_download(url[[i]], temp, ...)
+            if (!.phylopic_regular_file(temp)) {
+                stop("Phylopic download did not produce a non-empty file: ",
+                     target, call. = FALSE)
+            }
+            ## temp and target share a directory, so rename is atomic on the
+            ## supported filesystems.  No caller can observe a partial target.
+            if (!file.rename(temp, target)) {
+                stop("could not atomically install Phylopic download: ", target,
+                     call. = FALSE)
+            }
+        }, finally = {
+            unlink(lockdir, recursive = TRUE, force = TRUE)
+        })
     }
     invisible(destfile)
+}
+
+.phylopic_regular_file <- function(path) {
+    if (length(path) != 1L || is.na(path) || !file.exists(path)) {
+        return(FALSE)
+    }
+    info <- file.info(path)
+    isTRUE(!is.na(info$size) && info$size > 0 &&
+           !is.na(info$isdir) && !info$isdir)
+}
+
+.phylopic_lock_acquire <- function(lockdir, timeout, poll) {
+    if (dir.create(lockdir, showWarnings = FALSE, recursive = FALSE)) {
+        return(TRUE)
+    }
+    started <- as.numeric(Sys.time())
+    repeat {
+        if (dir.create(lockdir, showWarnings = FALSE, recursive = FALSE)) {
+            return(TRUE)
+        }
+        if (as.numeric(Sys.time()) - started >= timeout) return(FALSE)
+        Sys.sleep(poll)
+    }
+}
+
+.phylopic_download <- function(url, destfile, ...) {
+    utils::download.file(url, destfile, ...)
 }
 
 phylopic <- function(id) {
@@ -59,38 +153,114 @@ phylopic <- function(id) {
     }
 
     id <- .autocomplete_uid(x = id)
-    
-    url <- paste0(basepath, id, "/vector.svg")
-    if (is.null(basepath)){
-        url <- check_url(url)
-    }
+
+    ## Keep unresolved IDs as NA rather than constructing an unusable URL.
+    ## GeomImage already treats NA images as zero-width grobs.
+    url <- rep(NA_character_, length(id))
+    names(url) <- names(id)
+    valid <- !is.na(id) & nzchar(id)
+    url[valid] <- paste0(basepath, id[valid], "/vector.svg")
 
     return(url)
-    
+
 }
 
-# Universally unique identifier (uuid) of phylopic database 
+# Universally unique identifier (uuid) of phylopic database
 # is a 128-bit number. It has 32 alphanumeric characters in the
 # form of 8-4-4-4-12.
+
+## Normalize only the lookup key.  The first spelling seen is still passed to
+## the resolver, so output values and names remain aligned with the input.
+.phylopic_lookup_key <- function(x) {
+    x <- as.character(x)
+    key <- x
+    valid <- !is.na(x)
+    key[valid] <- tolower(trimws(x[valid]))
+    key
+}
+
+## Successful name lookups are stable for a session and safe to reuse.  Missing
+## results are intentionally not cached: a transient API failure should be
+## retried on a later call.  The cache is private to the package namespace and
+## includes the seed, so changing seed preserves phylopic_uid semantics.
+.phylopic_uid_cache <- new.env(parent = emptyenv())
+
+.phylopic_uid_cache_key <- function(name, seed) {
+    paste0(.phylopic_lookup_key(name), "\r",
+           paste(as.character(seed), collapse = ","))
+}
+
+.phylopic_uid_cache_get <- function(name, seed) {
+    key <- .phylopic_uid_cache_key(name, seed)
+    if (exists(key, envir = .phylopic_uid_cache, inherits = FALSE)) {
+        get(key, envir = .phylopic_uid_cache, inherits = FALSE)
+    } else {
+        NULL
+    }
+}
+
+.phylopic_uid_cache_set <- function(name, seed, uid) {
+    if (length(uid) == 1L && !is.na(uid) && nzchar(uid)) {
+        assign(.phylopic_uid_cache_key(name, seed), uid,
+               envir = .phylopic_uid_cache)
+    }
+    invisible(uid)
+}
+
+## Primarily useful for tests and for callers that deliberately want to force
+## fresh API lookups during a long-running session.
+.phylopic_uid_cache_clear <- function() {
+    rm(list = ls(envir = .phylopic_uid_cache, all.names = TRUE),
+       envir = .phylopic_uid_cache)
+    invisible(NULL)
+}
+
 .autocomplete_uid <- function(x){
-    x <- unlist(
-        lapply(x, function(i){
-        x1 <- unlist(strsplit(i, split='-'))
-        flag1 <- length(x1) == 5
-        if (!flag1){
-            i <- phylopic_uid(name = i)$uid
-        }else{
-            flag2 <- all(nchar(x1) == c(8, 4, 4, 4, 12))
-            if (!flag2){
-                i <- phylopic_uid(name = i)$uid
-            }
+    input_names <- names(x)
+    x <- as.character(x)
+    result <- rep(NA_character_, length(x))
+    names(result) <- input_names
+    if (length(x) == 0L) {
+        return(result)
+    }
+
+    key <- .phylopic_lookup_key(x)
+    missing <- is.na(x) | !nzchar(trimws(x))
+    uuid <- vapply(seq_along(x), function(index) {
+        i <- x[[index]]
+        if (missing[[index]]) {
+            FALSE
+        } else {
+            x1 <- strsplit(i, split = '-', fixed = TRUE)[[1]]
+            length(x1) == 5L &&
+                identical(as.integer(nchar(x1)), c(8L, 4L, 4L, 4L, 12L))
         }
-        return(i)
-      }
-    )
-    )
-    return(x)
-    
+    }, logical(1))
+    result[uuid] <- x[uuid]
+
+    lookup <- which(!missing & !uuid)
+    if (length(lookup) == 0L) {
+        return(result)
+    }
+
+    ## Resolve only the first occurrence of each normalized name, then map the
+    ## result back to every input row.  This keeps order, names, and per-row NA
+    ## behavior unchanged while avoiding repeated API requests.
+    unique_keys <- unique(key[lookup])
+    for (lookup_key in unique_keys) {
+        indices <- lookup[key[lookup] == lookup_key]
+        first <- indices[[1L]]
+        uid <- tryCatch(phylopic_uid(name = x[[first]])$uid,
+                        error = function(e) NA_character_)
+        if (length(uid) == 0L || is.na(uid[[1]]) ||
+            !nzchar(as.character(uid[[1]]))) {
+            uid <- NA_character_
+        } else {
+            uid <- as.character(uid[[1]])
+        }
+        result[indices] <- uid
+    }
+    result
 }
 
 
@@ -168,65 +338,130 @@ autocomplete_name <- function(name, ...){
 ##' @export
 ##' @author Guangchuang Yu
 phylopic_uid <- function(name, seed=123) {
-    ## if (length(name) == 1) {
-    ##     res <- phylopic_uid_item(name)
-    ## } else {
-    ##     res <- lapply(name, phylopic_uid_item)
-        
-    ##     names(res) <- name
-    ##     return(res)
-    ## }
+    ## Missing names and incomplete API responses are returned as NA.  This
+    ## preserves the input length and lets callers process a batch without
+    ## losing the names that did resolve.
+    name_input <- name
+    name <- as.character(name)
+    uid <- rep(NA_character_, length(name))
+    if (length(name) == 0L) {
+        return(data.frame(name = name_input, uid = uid,
+                          stringsAsFactors = FALSE))
+    }
 
-    res <- data.frame(name = name,
-                      uid = vapply(name, phylopic_uid_item, seed=seed, character(1)))
-    return(res)
+    key <- .phylopic_lookup_key(name)
+    missing <- is.na(name) | !nzchar(trimws(name))
+    lookup <- which(!missing)
+    for (lookup_key in unique(key[lookup])) {
+        indices <- lookup[key[lookup] == lookup_key]
+        first <- indices[[1L]]
+        cached <- .phylopic_uid_cache_get(name[[first]], seed)
+        if (!is.null(cached)) {
+            value <- cached
+        } else {
+            value <- tryCatch(phylopic_uid_item(name[[first]], seed = seed),
+                              error = function(e) NA_character_)
+            if (length(value) != 1L || is.na(value) || !nzchar(value)) {
+                value <- NA_character_
+            } else {
+                value <- as.character(value)
+                .phylopic_uid_cache_set(name[[first]], seed, value)
+            }
+        }
+        uid[indices] <- value
+    }
+    data.frame(name = name_input, uid = uid, stringsAsFactors = FALSE)
+}
+
+## Keep JSON parsing behind a small helper so malformed responses have one
+## well-defined outcome and the parsing policy can be tested without a network.
+.phylopic_from_json <- function(url) {
+    suppressWarnings(tryCatch(jsonlite::fromJSON(url),
+                               error = function(e) NULL))
+}
+
+.phylopic_build <- function(res) {
+    if (!is.list(res) || is.null(res$build) || length(res$build) == 0L) {
+        return(NULL)
+    }
+
+    build <- res$build[[1L]]
+    if (length(build) != 1L || is.na(build) || !nzchar(as.character(build))) {
+        return(NULL)
+    }
+    as.character(build)
+}
+
+.phylopic_vector_hrefs <- function(x) {
+    if (is.null(x)) {
+        return(character())
+    }
+    if (is.data.frame(x)) {
+        x <- as.list(x)
+    }
+    if (!is.list(x)) {
+        return(character())
+    }
+
+    ## The default jsonlite simplification returns data frames, while a
+    ## mocked/unsimplified response can be a list of item objects.  Walking
+    ## both shapes keeps missing optional fields harmless.
+    if (!is.null(x$href) && is.character(x$href)) {
+        return(unname(x$href))
+    }
+    if (!is.null(x$vectorFile)) {
+        return(.phylopic_vector_hrefs(x$vectorFile))
+    }
+    if (!is.null(x$`_links`)) {
+        return(.phylopic_vector_hrefs(x$`_links`))
+    }
+    unlist(lapply(x, .phylopic_vector_hrefs), use.names = FALSE)
+}
+
+.phylopic_extract_uids <- function(res) {
+    if (!is.list(res) || is.null(res$`_embedded`) ||
+        !is.list(res$`_embedded`) || is.null(res$`_embedded`$items)) {
+        return(character())
+    }
+
+    href <- .phylopic_vector_hrefs(res$`_embedded`$items)
+    href <- href[!is.na(href) & nzchar(href)]
+    if (length(href) == 0L) {
+        return(character())
+    }
+
+    pattern <- "^.*\\/images\\/([^\\/]+)\\/vector\\.svg(?:\\?.*)?$"
+    is_vector <- grepl(pattern, href)
+    matches <- regmatches(href[is_vector], regexec(pattern, href[is_vector]))
+    uid <- vapply(matches, function(x) x[[2L]], character(1))
+    uid[!is.na(uid) & nzchar(uid)]
 }
 
 ##' @importFrom withr with_seed
 phylopic_uid_item <- function(name, seed = 123, ...) {
-    #x <- gsub("[^a-zA-Z]+", "+", name)
-    #url <- paste0("http://phylopic.org/api/a/name/search?text=",
-    #              x, "&options=scientific+json")
-    #res <- jsonlite::fromJSON(url)$result[[1]]
-    
-    baseurl <- 'https://api.phylopic.org/images?'
+    if (length(name) != 1L || is.na(name) || !nzchar(trimws(name))) {
+        return(NA_character_)
+    }
 
+    baseurl <- 'https://api.phylopic.org/images?'
     nm <- gsub("[^a-zA-Z]+", "%20", tolower(name))
 
     url1 <- paste0(baseurl, "filter_name=", nm)
-    
-    res <- suppressWarnings(tryCatch(jsonlite::fromJSON(url1), error = function(e)return(NULL)))
-
-    url2 <- paste0(baseurl, "embed_items=true&page=0&filter_name=", nm, "&build=", res$build)
-
-
-    res <- suppressWarnings(tryCatch(jsonlite::fromJSON(url2),
-                    error = function(e) return(NULL)))
-    if ("errors" %in% names(res) || is.null(res)){
-        stop(paste0("Image resource of Phylopic database is not available for ", name, ". \n",
-                    "Ensure provided name is a valid taxonomic name or ",
-                    "try a species/genus resolution name. \n",
-                    'Or using the autocomplete_name function to get the suggestions for the full name.'
-                    )
-        )
-    }else{
-        href <- res$`_embedded`$items$`_links`$vectorFile$href
-        uids <- sub("/vector.svg", "", sub('+.*images/', "", href))
+    res1 <- .phylopic_from_json(url1)
+    build <- .phylopic_build(res1)
+    if (is.null(build)) {
+        return(NA_character_)
     }
-    
-    return(withr::with_seed(seed, sample(uids, 1)))
-    #for (id in res$uid) {
-    #    uid <- phylopic_valid_id(id)
-    #    if (!is.na(uid))
-    #        break
-    #}
-    #return(uid)
 
-    ## uid <- phylopic_valid_id(res$uid)
-    ## i <- which(!is.na(uid))
-    ## res <- res[i, , drop = FALSE]
-    ## res$uid <- uid[i]
-    ## return(res)
+    url2 <- paste0(baseurl, "embed_items=true&page=0&filter_name=", nm,
+                   "&build=", build)
+    res2 <- .phylopic_from_json(url2)
+    uids <- .phylopic_extract_uids(res2)
+    if (length(uids) == 0L) {
+        return(NA_character_)
+    }
+
+    withr::with_seed(seed, sample(uids, 1))
 }
 
 

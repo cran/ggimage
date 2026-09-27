@@ -13,7 +13,10 @@ geom_image(
   na.rm = FALSE,
   by = "width",
   nudge_x = 0,
+  nudge_y = 0,
   use_cache = TRUE,
+  width = NULL,
+  height = NULL,
   ...
 )
 }
@@ -34,7 +37,25 @@ geom_image(
 
 \item{nudge_x}{horizontal adjustment to nudge image}
 
+\item{nudge_y}{vertical adjustment to nudge image}
+
 \item{use_cache}{logical, whether to use image caching for better performance (default: TRUE)}
+
+\item{width, height}{Image width and height in native panel units, matching the
+plotting units used by the \code{size}/\code{by} behavior. They can be mapped per
+row via \code{aes(width = ..., height = ...)} or set for the whole layer. They
+override \code{size} (and therefore also \code{size = Inf} and \code{by}):
+\itemize{
+\item only \code{width} is provided, the height is derived from the image ratio;
+\item only \code{height} is provided, the width is derived from the image ratio;
+\item both are provided, the image is drawn in exactly that box, which may
+distort it when the ratio of the box differs from the image ratio.
+}
+
+\code{coord_fixed()} controls the physical aspect of the panel; it does not
+reinterpret these values. Values that are \code{NA}, not finite or not
+positive are ignored, and the \code{size}/\code{by} behavior is used for the
+affected image.}
 
 \item{...}{additional parameters}
 }
@@ -60,6 +81,13 @@ ggplot(d, aes(x, y)) + geom_image(aes(image=image))
 
 # With caching disabled
 ggplot(d, aes(x, y)) + geom_image(aes(image=image), use_cache=FALSE)
+
+# Per-row image size, via the `width` and `height` aesthetics
+ggplot(d, aes(x, y)) +
+    geom_image(aes(image=image, width=abs(x)/10, height=abs(y)/10))
+
+# Only one of them: the other dimension keeps the ratio of the image
+ggplot(d, aes(x, y)) + geom_image(aes(image=image, width=abs(x)/10))
 }
 }
 \author{
