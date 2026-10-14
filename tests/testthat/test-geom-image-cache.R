@@ -225,3 +225,146 @@ test_that("cache diagnostics reset independently and with clear", {
   expect_equal(as.numeric(unname(ggimage::get_image_cache_stats()$base["hits"])), 0)
   expect_equal(ggimage:::get_image_cache_size(), 0L)
 })
+
+test_that("image objects with different content do not share one cache entry", {
+  ggimage:::clear_image_cache()
+  withr::defer(ggimage:::clear_image_cache())
+
+  ## digest() of a magick object hashes its external pointer, which is the same
+  ## value for every image, so a cache keyed that way hands the first image
+  ## back for every later one of the same size
+  red <- magick::image_blank(4, 4, color = "red")
+  blue <- magick::image_blank(4, 4, color = "blue")
+  expect_false(identical(ggimage:::image_cache_key(red), ggimage:::image_cache_key(blue)))
+
+  args <- function(img) {
+    list(x = 0.5, y = 0.5, size = 0.05, img = img, colour = NULL, opacity = 1,
+         angle = 0, adj = 1, image_fun = NULL, hjust = 0.5, by = "width", asp = 1,
+         use_cache = TRUE, width = NA_real_, height = NA_real_)
+  }
+  first_pixel <- function(grob) as.character(grob$raster[1L, 1L])
+  red_grob <- do.call(ggimage:::imageGrob, args(red))
+  blue_grob <- do.call(ggimage:::imageGrob, args(blue))
+
+  expect_equal(first_pixel(red_grob), "#ff0000ff")
+  expect_equal(first_pixel(blue_grob), "#0000ffff")
+  expect_equal(ggimage:::get_image_cache_size(), 2L)
+
+  ## a repeat of the same object still costs one entry
+  same <- do.call(ggimage:::imageGrob, args(red))
+  expect_equal(ggimage:::get_image_cache_size(), 2L)
+  expect_equal(first_pixel(same), "#ff0000ff")
+})
+
+test_that("eviction 'none' keeps every entry despite a capacity of one", {
+  ## `.image_cache_enforce_capacity()` returns early when
+  ## `eviction == "none"`, so capacity and byte caps stop evicting.  The
+  ## contrast with lru below is what makes the assertion meaningful: with the
+  ## same capacity the lru policy must evict, and it does.
+  ggimage:::clear_image_cache()
+  withr::defer(ggimage:::clear_image_cache())
+  now <- 0
+  withr::local_options(list(
+    ggimage.image_cache_base_capacity = 1,
+    ggimage.image_cache_transform_capacity = 1,
+    ggimage.image_cache_ttl = Inf,
+    ggimage.image_cache_eviction = "none",
+    ggimage.image_cache_clock = function() now
+  ))
+
+  ggimage:::cache_set_image("a", "a")
+  now <- 1
+  ggimage:::cache_set_image("b", "b")
+
+  ## both survive even though capacity is 1
+  expect_equal(ggimage:::get_image_cache_size(), 2L)
+  expect_equal(ggimage:::cache_get_image("a"), "a")
+  expect_equal(ggimage:::cache_get_image("b"), "b")
+  expect_equal(unname(ggimage::get_image_cache_stats()$base["evictions"]), 0L)
+
+  ## the same holds for the transformed cache, which shares the policy
+  ggimage:::cache_set_transformed("one", 1)
+  ggimage:::cache_set_transformed("two", 2)
+  expect_equal(ggimage:::get_image_transform_cache_size(), 2L)
+  expect_equal(ggimage:::cache_get_transformed("one"), 1)
+  expect_equal(ggimage:::cache_get_transformed("two"), 2)
+
+  ## Control: the default lru policy with the same capacity does evict.
+  ggimage:::clear_image_cache()
+  withr::local_options(list(
+    ggimage.image_cache_base_capacity = 1,
+    ggimage.image_cache_transform_capacity = 1,
+    ggimage.image_cache_eviction = "lru"
+  ))
+  ggimage:::cache_set_image("a", "a")
+  now <- 2
+  ggimage:::cache_set_image("b", "b")
+  expect_equal(ggimage:::get_image_cache_size(), 1L)
+  expect_true(unname(ggimage::get_image_cache_stats()$base["evictions"]) >= 1L)
+})
+
+test_that("eviction 'none' ignores a byte cap as well as the item cap", {
+  ggimage:::clear_image_cache()
+  withr::defer(ggimage:::clear_image_cache())
+  one_bytes <- ggimage:::`.image_cache_estimate_bytes`("a")
+  withr::local_options(list(
+    ggimage.image_cache_base_capacity = Inf,
+    ggimage.image_cache_base_bytes = one_bytes,
+    ggimage.image_cache_transform_bytes = Inf,
+    ggimage.image_cache_ttl = Inf,
+    ggimage.image_cache_eviction = "none"
+  ))
+
+  ggimage:::cache_set_image("a", "a")
+  ggimage:::cache_set_image("b", "b")
+
+  ## The byte cap alone would have dropped one entry under lru/fifo (see the
+  ## "estimated byte cap evicts entries" test above), but "none" disables it.
+  expect_equal(ggimage:::get_image_cache_size(), 2L)
+  expect_equal(ggimage:::cache_get_image("a"), "a")
+  expect_equal(ggimage:::cache_get_image("b"), "b")
+  expect_equal(unname(ggimage::get_image_cache_stats()$base["evictions"]), 0L)
+})
+
+test_that("eviction 'none' still expires entries past their ttl", {
+  ## "none" disables eviction, not expiry: a stale entry must not be served.
+  ggimage:::clear_image_cache()
+  withr::defer(ggimage:::clear_image_cache())
+  now <- 0
+  withr::local_options(list(
+    ggimage.image_cache_base_capacity = 1,
+    ggimage.image_cache_ttl = 5,
+    ggimage.image_cache_eviction = "none",
+    ggimage.image_cache_clock = function() now
+  ))
+
+  ggimage:::cache_set_image("a", "a")
+  now <- 1
+  ggimage:::cache_set_image("b", "b")
+  expect_equal(ggimage:::get_image_cache_size(), 2L)
+
+  now <- 10
+  expect_null(ggimage:::cache_get_image("a"))
+  expect_null(ggimage:::cache_get_image("b"))
+  expect_equal(ggimage:::get_image_cache_size(), 0L)
+})
+
+test_that("an unknown eviction policy falls back to lru", {
+  old_options <- options(
+    ggimage.image_cache_base_capacity = 1,
+    ggimage.image_cache_transform_capacity = 1,
+    ggimage.image_cache_ttl = Inf,
+    ggimage.image_cache_eviction = "nonsense",
+    ggimage.image_cache_bytes = Inf
+  )
+  withr::defer(options(old_options))
+  ggimage:::clear_image_cache()
+  withr::defer(ggimage:::clear_image_cache())
+
+  policy <- ggimage::get_image_cache_policy()
+  expect_equal(policy$eviction, "lru")
+
+  ggimage:::cache_set_image("a", "a")
+  ggimage:::cache_set_image("b", "b")
+  expect_equal(ggimage:::get_image_cache_size(), 1L)
+})

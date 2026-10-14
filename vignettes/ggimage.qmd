@@ -1,0 +1,859 @@
+---
+title: "Use images in ggplot2"
+vignette: >
+  %\VignetteIndexEntry{Use images in ggplot2}
+  %\VignetteEngine{quarto::html}
+  %\VignetteEncoding{UTF-8}
+format:
+  html:
+    toc: true
+    theme: cosmo
+    highlight: github
+---
+
+`ggimage` lets you use images in `ggplot2`. An image can be a file on disk, a
+`magick` image, or a URL, and it can be used as a point glyph, as a background,
+or as an inset.
+
+Every image layer is an ordinary `ggplot2` layer: it takes `mapping` and `data`,
+it respects `stat`, `position` and `inherit.aes`, and it can be combined with any
+other layer, scale, facet or theme. The geoms in this package differ only in
+*where the image comes from* and *how it is sized*.
+
+```{r setup}
+#| echo: false
+#| results: hide
+#| message: false
+library("ggplot2")
+library("ggimage")
+```
+
+## Arguments shared by the image layers
+
+The image geoms accept the same arguments as any other ggplot2 geom, plus the
+ones below. Reading this list once makes the rest of the document short, since
+the sections that follow only describe what is specific to each geom.
+
+**Aesthetics**
+
+- `image` (or the `image` argument for a single image). The value may be a file
+  path, a URL, or a `magick` image, and it may be mapped per row, so different
+  points can use different images. A character column holds one path or URL per
+  row; a list-column holds one `magick` image per row, as in
+  `df$image <- list(img1, img2)`, and mapping it with `aes(image = image)` draws
+  each row's own image. A row whose `image` is `NA` is drawn as nothing rather
+  than as an error.
+- `size`. How large the image is, as a **fraction of the panel** -- `size = .05`
+  is five percent of the width of the panel by default. Because it is relative
+  to the panel, the same code gives the same visual result whatever the data
+  range or the size of the output device.
+- `width` and `height`. An explicit size, in the same panel units as `size`.
+  Either can be mapped per row. Giving one of them keeps the aspect ratio of the
+  image; giving both draws the image in exactly that box, which distorts it if
+  the box has a different ratio. They take precedence over `size`.
+- `colour` and `alpha`. Applied per row: `colour` tints the image and `alpha`
+  sets its opacity. `alpha` is an ordinary ggplot2 aesthetic, so its default
+  continuous scale maps the data range onto `[0.1, 1]`; add
+  `scale_alpha_identity()` to pass your values through unchanged.
+- `angle`. Rotates the image, in degrees, counter-clockwise.
+
+**Layer parameters**
+
+- `by`. Whether `size` refers to the `"width"` (the default) or the `"height"`
+  of the image. It has no effect on `width` and `height`.
+- `nudge_x`, `nudge_y`. Shift the images by a fixed amount, in data units. The
+  data are not changed, so this is the way to offset an image from the point it
+  belongs to.
+- `hjust`. Where the image sits horizontally relative to its `x`. The default,
+  `0.5`, centres it; `0` (or `"left"`) puts its left edge on the point and `1`
+  (or `"right"`) its right edge.
+- `asp`. Divides the width-to-height ratio of an image sized by `size`, so the
+  image is drawn taller by that factor. The default, `1`, keeps the proportions
+  the image has on disk.
+- `use_cache`. Whether to reuse prepared images across draws (the default). See
+  [The image cache](#the-image-cache) for how to bound it.
+- `image_fun`. A function applied to the `magick` image before it is drawn, for
+  instance to flatten a transparent background or to recolour it.
+
+## Drawing images at data points
+
+### geom_image
+
+```{r geom-image}
+#| warning: false
+set.seed(2017-02-21)
+img <- list.files(system.file("extdata", package = "ggimage"),
+                  pattern = "png", full.names = TRUE)
+d <- data.frame(x = rnorm(10),
+                y = rnorm(10),
+                image = sample(img, size = 10, replace = TRUE))
+
+## one image, used by the sections below
+logo <- system.file("extdata/Rlogo.png", package = "ggimage")
+
+ggplot(d, aes(x, y)) + geom_image(aes(image = image), size = .05)
+ggplot(d, aes(x, y)) + geom_image(aes(image = image), size = .05, by = "height")
+
+ggplot(d, aes(x, y)) + geom_image(image = d$image[1])
+d$size <- seq(.05, .15, length.out = 10)
+ggplot(d, aes(x, y)) + geom_image(aes(image = image, size = I(size)))
+
+ggplot(d, aes(x, y)) + geom_image(aes(image = image), color = "firebrick")
+```
+
+`geom_image()` is the layer everything else builds on. The first plot maps
+`image` to a column, so each point gets its own picture; the second asks for the
+same size measured against the height of the panel instead of its width, which
+is the right choice when the panel is taller than it is wide. The third passes a
+single image as a plain argument instead of mapping it, which draws the same
+picture at every point.
+
+The fourth maps `size` to a column. Wrapping it in `I()` matters: without it
+ggplot2 would build a legend for the size, and the values would be rescaled
+rather than used as the fractions of the panel you wrote. The last plot sets a
+fixed `colour`, which tints every image.
+
+`image` may also be a column of URLs, or a list of `magick` images, so an image
+can come from anywhere without being written to disk first.
+
+`size` is one way to control the dimensions; `width` and `height` are the other.
+They are read per row, so a single layer can draw images of different shapes.
+Giving only one of them preserves the aspect ratio of each image; giving both
+stretches it into the requested box.
+
+```{r geom-image-dimensions}
+#| warning: false
+d$w <- seq(.02, .1, length.out = 10)
+ggplot(d, aes(x, y)) + geom_image(aes(image = image, width = w))
+
+## width and height together stretch the image into the requested box
+ggplot(d, aes(x, y)) + geom_image(aes(image = image, width = .12, height = .04))
+```
+
+`colour` and `alpha` are applied to each image in turn, which makes it easy to
+fade an image into the background or to highlight a subset of the rows. Note the
+`scale_alpha_identity()` in both plots below: `alpha` is an ordinary ggplot2
+aesthetic, and its default continuous scale would compress the values you give
+into `[0.1, 1]`.
+
+```{r geom-image-colour}
+#| warning: false
+d$fade <- seq(.2, 1, length.out = 10)
+ggplot(d, aes(x, y)) + geom_image(aes(image = image), size = .08, alpha = .5) +
+    scale_alpha_identity()
+
+ggplot(d, aes(x, y)) + geom_image(aes(image = image, alpha = fade), size = .08) +
+    scale_alpha_identity()
+```
+
+### geom_image_repel
+
+`geom_image_repel()` draws the same images as `geom_image()` but moves them so
+that they no longer overlap, which keeps the images readable when the points are
+close together. The positions in the data are untouched -- only the drawing is
+displaced -- so the axes, the scales and any other layer keep their meaning.
+
+```{r geom-image-repel}
+#| warning: false
+d2 <- data.frame(x = c(.50, .52, .51), y = c(.50, .51, .49))
+p <- ggplot(d2, aes(x, y, image = logo)) +
+    scale_x_continuous(limits = c(0, 1)) +
+    scale_y_continuous(limits = c(0, 1))
+
+## as they are, the images overlap
+p + geom_image(width = .12)
+
+## ... and are pushed apart by geom_image_repel()
+p + geom_image_repel(width = .12)
+```
+
+It takes everything `geom_image()` takes, plus four parameters that control the
+displacement:
+
+- `max.iter` (default `100`). How many displacement iterations to run. Setting
+  it to `0` keeps the original coordinates, which is useful to check how much of
+  the layout the repulsion is actually responsible for.
+- `force` (default `0.1`). The fraction of the overlap that is resolved in one
+  iteration: each image of an overlapping pair moves by `force * overlap / 2`.
+  Larger values converge in fewer iterations but produce bigger jumps, which can
+  look arbitrary.
+- `box.padding` (default `0`). Extra space kept around every image box, in the
+  same units as `width`. Raise it when the images are legible but still feel
+  cramped.
+- `direction` (default `"both"`). Which axes the images may move along, one of
+  `"both"`, `"x"` or `"y"`. Overlap is always detected on both axes; the
+  parameter only restricts the movement, so `direction = "x"` slides images
+  horizontally until they clear each other.
+
+The displacement is deterministic: the same data and the same parameters give
+the same layout on every run, and no network access is involved once the images
+are cached. That also means a plot does not change shape when it is redrawn.
+
+### geom_subview
+
+`geom_subview()` embeds a whole plot -- a pie chart, a legend, a small `ggplot`
+-- as an inset at a data point. Because `width` and `height` are in **data
+units**, the insets stay the size you asked for whatever the panel is, and they
+move with the data when the scales change.
+
+```{r geom-subview}
+library(tibble)
+dd <- data.frame(x = LETTERS[1:3], y = 1:3)
+pie <- ggplot(dd, aes(x = 1, y, fill = x)) + geom_bar(stat = "identity", width = 1) +
+    coord_polar(theta = "y") +
+    theme_void() + theme(legend.position = "none") + theme_transparent()
+
+df <- tibble(x = sample(2:9),
+             y = sample(2:9),
+             width = sample(seq(0.5, 3, length.out = length(x))),
+             pie = list(pie))
+p <- ggplot(data = data.frame(x = c(0, 10), y = c(0, 10)), aes(x, y)) + geom_blank()
+p + geom_subview(aes(x = x, y = y, subview = pie, width = width, height = width), data = df)
+```
+
+The subview goes in a list column, one plot per row, and `x`, `y`, `width` and
+`height` are mapped from the data frame as usual. The insets are drawn with a
+transparent background (`theme_transparent()`, see [Themes](#themes)), so the
+plot underneath shows through instead of being hidden by a grey panel.
+
+The subview may also be passed as the first argument, which is the form the
+published examples use: `geom_subview(pie, x = 2, y = 2)` draws one inset at
+`(2, 2)`. In that form `width` and `height` default to `0.1`.
+
+## Sub-views from other graphics systems
+
+`geom_subview()` accepts anything that `ggplotify::as.grob()` can turn into a
+grid grob, so an inset does not have to be a `ggplot`. A base graphics plot, a
+recorded plot, a grob, or an image can be placed as a sub-view just as easily,
+and plot objects from other packages work whenever `as.grob()` has a method for
+them.
+
+| sub-view | how to pass it |
+| --- | --- |
+| base graphics | a `function()` that draws it, or a one-sided `formula` such as `~ plot(x, y)` |
+| recorded plot | `function() replayPlot(rec)` |
+| `grid` grob | the grob itself |
+| `ggplot` | the plot object; subclasses such as `ggtree` objects work the same |
+| `magick` | the image |
+
+A base plot is a side effect on a graphics device rather than an object, so it
+has to be handed over as something that can be *drawn*: a function, or a formula
+whose right-hand side is the plotting call.
+
+```{r subview-base}
+#| warning: false
+#| fig-width: 7
+#| fig-height: 4.8
+set.seed(2026)
+svd <- data.frame(x = rep(c(0, 2, 4), 2), y = rep(c(0, 2), each = 3))
+svd$hist <- lapply(1:6, function(i) function() {
+    hist(rnorm(300, mean = i), main = "", xlab = "", ylab = "",
+         col = i, border = "white", axes = FALSE)
+})
+ggplot(svd, aes(x, y)) + geom_point(size = 2) +
+    geom_subview(aes(x = x, y = y, subview = hist), data = svd,
+                 width = 1.7, height = 1.7) +
+    xlim(-1.2, 5.2) + ylim(-1.2, 3.2) + coord_fixed() + theme_bw()
+```
+
+The same `as.grob()` conversion runs for every row, so one layer can hold
+sub-views built in different ways.
+
+```{r subview-systems}
+#| warning: false
+#| fig-width: 7
+#| fig-height: 5.6
+svd <- data.frame(x = 1:3, y = 0)
+svd$subview <- list(
+    function() plot(cos(seq(0, 2 * pi, length.out = 50)), type = "l",
+                    axes = FALSE, ann = FALSE),
+    ggplot(mtcars, aes(wt, mpg)) + geom_point(),
+    magick::image_read(system.file("extdata/Rlogo.png", package = "ggimage"))
+)
+labels <- c("base graphics", "ggplot", "magick")
+names(svd$subview) <- labels
+
+ggplot(svd, aes(x, y)) + geom_blank() +
+    geom_subview(aes(x = x, y = y, subview = subview), data = svd,
+                 width = .8, height = .8) +
+    geom_text(aes(x, y, label = label),
+              data = data.frame(x = 1:3, y = -.7, label = labels),
+              vjust = 1, size = 3.2) +
+    xlim(.5, 3.5) + ylim(-1.2, 1.2) + coord_fixed() + theme_void()
+```
+
+Two things are worth knowing before relying on this.
+
+**The panel still needs a scale.** `geom_subview()` draws with
+`annotation_custom()`, which carries no `x` or `y` aesthetic of its own. When it
+is the only layer in the plot, the panel keeps its default `(0, 1)` range and
+only the insets that fall inside that range are drawn. Add a `geom_blank()`, a
+`geom_point()` or a `geom_text()` -- as above -- or set the limits explicitly.
+
+**A sub-view given as a function is drawn afresh on every draw.** The conversion
+happens when the plot is drawn, so the function has to be able to run on its own,
+and the usual closure trap applies: build the list of functions with `lapply()`
+rather than a `for` loop, or every function will use the last value of the loop
+variable.
+
+For a plot that already exists as a recorded plot, replay it inside a function:
+
+```r
+dev.control(displaylist = "enable")   # otherwise the recording comes out empty
+plot(1:10)
+rec <- recordPlot()
+
+df$subview <- list(function() replayPlot(rec))
+```
+
+`recordPlot()` returns an empty recording unless the display list was enabled,
+which is why `dev.control()` is there.
+
+## Images as backgrounds
+
+### geom_bgimage
+
+Use an image as the background of the plot panel.
+
+```{r geom-bgimage}
+#| warning: false
+ggplot(iris, aes(Petal.Length, Petal.Width)) +
+    geom_bgimage(logo) + geom_point()
+```
+
+The layer is added first, so everything drawn after it appears on top. By
+default the image is stretched to fill the panel, which is usually what you want
+for a texture, but it does mean the image is distorted if its ratio differs from
+the panel's.
+
+Give `pixel` to place the image in data coordinates instead: the chosen pixel of
+the image -- `c(col, row)` counted from the top-left corner -- is anchored to the
+data point `(x, y)`, and `scale` sets the number of data units per image pixel.
+The anchoring does not depend on the size of the image or of the panel, so the
+image keeps its place when the plot is resized or the scales change.
+
+```{r geom-bgimage-anchor}
+#| warning: false
+info <- magick::image_info(magick::image_read(logo))
+
+ggplot(iris, aes(Petal.Length, Petal.Width)) +
+    geom_bgimage(logo, pixel = c(1, info$height), x = 0, y = 0,
+                 scale = 2.5 / info$width) +
+    geom_point() +
+    scale_x_continuous(limits = c(-0.4, 7), expand = c(0, 0)) +
+    scale_y_continuous(limits = c(-0.3, 2.6), expand = c(0, 0)) +
+    coord_fixed()
+```
+
+Here the bottom-left corner of the image (`col = 1`, `row = height`) is pinned to
+the origin, and `scale = 2.5 / info$width` makes the image 2.5 data units wide.
+Since the anchoring is in data units, `coord_fixed()` is needed to keep the image
+from being stretched by unequal axes.
+
+### ggbackground
+
+`ggbackground()` and `geom_bgimage()` both fill the panel and stretch the image
+to it. The difference is how they are applied: `ggbackground(p, img)` takes a
+plot and returns one, so it can be used on a plot that is already built, whereas
+`geom_bgimage()` is a layer and sits behind whatever is added after it.
+
+```{r ggbackground}
+#| warning: false
+ggbackground(ggplot(iris, aes(Petal.Length, Petal.Width)) + geom_point(), logo)
+```
+
+The background is inserted as the first layer rather than as a grob wrapping the
+whole plot, so anything added to the result afterwards is still positioned by the
+plot's own coordinate system. Extra arguments are passed on to `geom_image()`,
+so `ggbackground(p, img, colour = "grey80")` tints the background.
+
+## Images from remote services
+
+Several geoms take the *name* of an image and fetch it for you: a Pokemon, an
+emoji, an icon, a flag, or a taxonomic silhouette. They all use the same `image`
+aesthetic and the same sizing arguments as `geom_image()`, and anything that is a
+URL can also be given to `geom_image()` directly.
+
+Downloaded images are cached, so a plot that is redrawn -- on a resize, or in a
+loop of `ggsave()` calls -- does not download them again.
+
+### geom_pokemon
+
+```{r geom-pokemon}
+#| warning: false
+ggplot(d, aes(x, y)) + geom_pokemon(aes(image = ifelse(x > 0, "pikachu", "tauros")), size = .1)
+```
+
+The name is the Pokemon's name in lower case, and `list.pokemon()` returns the
+names that are available.
+
+### geom_emoji
+
+Emoji are named by code point, e.g. `1f600` for a grinning face.
+
+```{r geom-emoji}
+#| warning: false
+set.seed(123)
+iris2 <- iris[sample(1:nrow(iris), 30), ]
+model <- lm(Petal.Length ~ Sepal.Length, data = iris2)
+iris2$fitted <- predict(model)
+
+ggplot(iris2, aes(x = Sepal.Length, y = Petal.Length)) +
+  geom_linerange(aes(ymin = fitted, ymax = Petal.Length),
+                 colour = "purple") +
+  geom_abline(intercept = model$coefficients[1],
+              slope = model$coefficients[2]) +
+  geom_emoji(aes(image = ifelse(abs(Petal.Length - fitted) > 0.5, "1f622", "1f600")))
+```
+
+Because the image can be computed per row, an emoji layer is a compact way to
+label the outcome of a calculation: here the face depends on the residual of
+each point.
+
+### geom_icon
+
+```{r geom-icon}
+#| warning: false
+d$icon <- sample(c("power", "wifi", "pie-chart"), 10, replace = TRUE)
+ggplot(d, aes(x, y)) + geom_icon(aes(image = icon), size = .1)
+```
+
+See <https://ionic.io/ionicons> for the icon names; `list.icon()` returns the ones
+this version knows about.
+
+### geom_flag
+
+Flags are named by their two-letter code, or by a subdivision code such as
+`GB-ENG` for England.
+
+```{r geom-flag}
+#| warning: false
+f <- system.file("extdata/medals.txt", package = "ggimage")
+medals <- read.table(f, header = TRUE)
+p <- ggplot(medals, aes(Country, count)) + geom_col(aes(fill = medal), width = .8)
+
+p + geom_flag(y = -2, aes(image = code)) +
+    coord_flip() + expand_limits(y = -2) +
+    scale_fill_manual(values = c("Gold" = "gold", "Bronze" = "#cd7f32", "Silver" = "#C0C0C0"))
+```
+
+Note the `y = -2` here: it is a fixed position for every flag rather than a
+mapping, and `expand_limits()` makes room for it below the bars. `list.flag()`
+returns the available codes.
+
+### geom_worldcup2018
+
+`geom_worldcup2018()` is `geom_flag()` restricted to the 32 teams of the 2018
+FIFA World Cup, which is a convenient way to draw a set of flags without
+looking up any codes. A name outside that list is drawn as nothing, so an
+unexpected value shows up as a gap rather than as a wrong flag.
+
+```{r geom-worldcup2018}
+#| warning: false
+wc <- expand.grid(x = 1:8, y = 1:4)
+wc$country <- list.worldcup2018()
+
+ggplot(wc, aes(x, y)) +
+    geom_worldcup2018(aes(image = country), size = .1) +
+    coord_fixed() + theme_void()
+```
+
+`list.worldcup2018()` returns the 32 codes the geom accepts. It is a fixed
+vector, so unlike the other `list.*()` helpers it does not need a network
+connection.
+
+### geom_phylopic
+
+[PhyloPic](https://www.phylopic.org/) hosts free silhouettes of organisms.
+`geom_phylopic()` takes a scientific name, or a PhyloPic uid, and resolves it
+for you.
+
+```{r geom-phylopic}
+#| warning: false
+sp <- c("Canis lupus", "Ursus maritimus", "Homo sapiens", "Gallus gallus",
+        "Bos taurus", "Panthera leo", "Loxodonta africana",
+        "Drosophila melanogaster")
+species <- data.frame(x = seq_along(sp), y = 1, species = sp)
+
+ggplot(species, aes(x, y)) +
+    geom_phylopic(aes(image = species), size = .12) +
+    scale_x_continuous(breaks = seq_along(sp), labels = sp) +
+    ylim(.7, 1.3) +
+    theme_void() + theme(axis.text.x = element_text(size = 8, angle = 20, hjust = 1))
+```
+
+Unlike the other remote geoms, `geom_phylopic()` has its own default `image_fun`,
+which clears the background of the SVG rather than leaving it white. Pass your
+own `image_fun` to change that.
+
+`phylopic_uid()` is the lookup behind it. A name can match several silhouettes,
+and `seed` picks one of them, so the same name gives the same image on every
+run. A name that resolves to nothing comes back as `NA`, and the layer draws
+nothing for that row.
+
+```{r phylopic-uid}
+#| eval: false
+phylopic_uid(c("Canis lupus", "Homo sapiens"))
+```
+
+A uid can be used directly, which is useful when a name does not resolve, or
+when you want a specific drawing.
+
+```{r geom-phylopic-uid}
+#| warning: false
+uid <- "5036f260-5a0d-42c5-a0bd-9eb0729e54e0" # Canis lupus
+ggplot(data.frame(x = 1, y = 1), aes(x, y)) +
+    geom_phylopic(aes(image = uid), size = .5) +
+    xlim(.5, 1.5) + ylim(.5, 1.5) + theme_void()
+```
+
+`autocomplete_name()` suggests full names from a partial one, which is the
+quickest way to find a name that will resolve.
+
+```{r autocomplete-name}
+#| eval: false
+head(autocomplete_name("Canis"), 4)
+```
+
+To keep the images, or to draw them without a network connection,
+`download_phylopic()` saves them into a directory. The file paths it returns can
+then be passed to `geom_phylopic()` just like a uid, and because they are local
+files the plot no longer depends on PhyloPic being reachable.
+
+```{r download-phylopic}
+#| eval: false
+dir <- tempfile()
+dir.create(dir)
+files <- download_phylopic(c("Canis lupus", "Gallus gallus"), destdir = dir)
+basename(files)
+```
+
+### Listing the images that are available
+
+Each service has a `list.*()` function that returns the names it accepts, which
+is easier than guessing. `list.pokemon()`, `list.icon()` and `list.flag()` ask
+the service for its current files, so the three calls below are shown but not
+run; `list.worldcup2018()` is the exception, being a fixed vector. The geoms
+themselves need no connection once the images are cached.
+
+```{r list-images}
+#| eval: false
+head(list.pokemon(), 3)
+head(list.icon(), 3)
+head(list.flag(), 3)
+```
+
+## Interactive images
+
+`geom_image_interactive()` and `geom_phylopic_interactive()` are the
+[ggiraph](https://davidgohel.github.io/ggiraph/) counterparts of `geom_image()`
+and `geom_phylopic()`. They add the ggiraph aesthetics -- `tooltip`, `data_id`,
+`onclick` -- to every image, so a plot can be embedded in an HTML page and the
+images become hoverable and clickable.
+
+On their own they draw exactly what `geom_image()` draws, which is what makes
+them safe to use in a function that may or may not be rendered to HTML:
+
+```{r geom-image-interactive}
+#| warning: false
+d$id <- seq_len(nrow(d))
+
+ggplot(d, aes(x, y)) +
+    geom_image_interactive(aes(image = image), size = .08) +
+    theme_void()
+```
+
+The interactivity appears once the plot is wrapped in `girafe()`. The chunk
+below is not evaluated here, because the ggiraph JavaScript it needs would add
+several megabytes to this vignette; run it in your own document to get the
+interactive version, and hover the images to see the tooltips.
+
+```{r geom-image-interactive-girafe}
+#| eval: false
+library(ggiraph)
+
+girafe(ggobj = ggplot(d, aes(x, y)) +
+    geom_image_interactive(aes(image = image, tooltip = round(x, 2), data_id = id),
+                           size = .08) +
+    theme_void())
+```
+
+## Animating frames with gganimate
+
+`geom_image()` draws one still image per row of its data, and it knows nothing
+about time: a raster grob is drawn when the plot is drawn, and no layer of this
+package asks for a second one. Animation therefore comes from
+[gganimate](https://gganimate.com/), which owns the states of a plot, the frame
+rate, and the rendering of the result. `ggimage` imports nothing from gganimate;
+the two packages meet only in the data frame you hand to them. The pattern below
+is a *frame-data-driven* one: you decide what the frames are, the data frame
+says which image belongs to which frame, and gganimate walks through them.
+
+The first step happens before any plotting. A source animation -- a GIF, a
+video, a sequence of frames -- is a container of still images, and that
+container has to become files on disk that a row of data can point at.
+
+```{r animate-materialise-frames}
+#| eval: false
+library(magick)
+library(gganimate)
+
+## a small deterministic source animation: four solid-colour frames
+frames <- lapply(c("steelblue", "gold", "firebrick", "seagreen"), function(cl) {
+    image_blank(200, 200, color = cl) |> image_annotate(cl, size = 24)
+})
+gif <- image_join(frames)
+image_write(gif, "source.gif", format = "gif")   # a multi-frame file, not one PNG
+
+## ... and the same thing read back, one frame per file
+src <- image_read("source.gif")
+dir.create("frames", showWarnings = FALSE)
+paths <- sprintf("frames/frame%02d.png", seq_along(src))
+for (i in seq_along(src)) {
+    ## magick writes the format of the *object*, not of the file name, so an
+    ## explicit format is what keeps these files PNG rather than GIF bytes
+    image_write(src[i], paths[i], format = "png")
+}
+basename(paths)
+```
+
+The frame files are now ordinary paths, so the rest is a data frame. It has one
+row per (glyph, frame), and a column naming the state -- which frame each row
+belongs to. That column is plain input data. It is not an aesthetic of
+`geom_image()`, and nothing in this package reads it: it is the column
+`transition_manual()` is given.
+
+```{r animate-frame-table}
+#| eval: false
+## one glyph that stays put, one that moves across the frames
+nf <- length(paths)
+d <- data.frame(
+    glyph = rep(c("fixed", "moving"), each = nf),
+    frame = rep(seq_len(nf), times = 2),
+    x = c(rep(1, nf), seq(1, 4, length.out = nf)),
+    y = rep(1, 2 * nf)
+)
+d$image <- rep(paths, times = 2)
+head(d, 3)
+```
+
+The plot is then built from two kinds of layer. A layer whose data has no
+`frame` column cannot depend on the frame at all, so it is drawn in every
+rendered frame -- here a band and some points that give the animation a
+backdrop. The images come from a `geom_image()` layer over the frame table,
+with a local `aes()` so that the `x` and `image` of that table are the ones
+used.
+
+```{r animate-plot}
+#| eval: false
+## no frame column here, so this layer persists across states
+static <- data.frame(x = 1:4, y = 1)
+
+p <- ggplot(d, aes(x, y)) +
+    geom_rect(aes(xmin = 0.5, xmax = 4.5, ymin = 0.6, ymax = 1.4),
+              data = data.frame(x = 1), fill = "grey92", inherit.aes = FALSE) +
+    geom_point(data = static, size = 1.5) +
+    geom_image(aes(image = image), data = d, size = .12) +
+    coord_fixed() +
+    theme_void()
+
+## the states come from the frame column, not from a ggimage aesthetic
+p <- p + transition_manual(frame)
+
+animate(p, nframes = nf, fps = 4, renderer = magick_renderer())
+```
+
+`transition_manual()` takes the column directly; there is no ordering to
+declare, since the values of `frame` are taken as they come. `nframes` and
+`fps` belong to `animate()` rather than to the plot, and they choose the output
+schedule -- how long each state is held, and how many frames the result has.
+`magick_renderer()` writes the frames through magick, so no other software is
+needed to produce the file; gganimate also offers renderers built on external
+tools, which are its business and not this package's.
+
+### What this does not promise
+
+- **You preprocess the frames.** Turning a source animation into still files,
+  and choosing which of them become states, is done by the magick calls above.
+  `ggimage` reads the paths it is given and nothing else; it never opens a GIF
+  as a sequence.
+- **gganimate drives the states and the rendering.** The transitions, the frame
+  rate, the renderer and the output file are all its API. This package supplies
+  the images and no part of the animation.
+- **A static plot still draws one image per row.** `geom_image(image =
+  "sprite.gif")` draws a still image -- magick gives the first frame of the
+  file -- and is not playback. Nothing in a plain `ggplot` advances between
+  frames, because a raster grob has no clock.
+- **The timing of the source is not preserved.** The per-frame delays, the loop
+  count and the disposal method of the original file are not read and not
+  carried over; the schedule you pass to `animate()` is the schedule you get.
+  Frame replacement is discrete, so an image changes from one state to the next
+  with nothing in between -- there is no easing of the images themselves,
+  whereas the position of a glyph follows whichever transition you chose.
+
+## Legend keys
+
+An image layer has no natural legend key: a raster grob is not a shape a legend
+can draw by default, and the images are usually the data rather than a mapped
+scale. The global option `ggimage.keytype` chooses what to draw instead, and
+accepts four values:
+
+- `"point"` (the default when the option is unset) draws a filled point.
+- `"rect"` draws a filled rectangle.
+- `"image"` draws an image instead of a shape, tinted by `colour` and faded by
+  `alpha` like the images in the panel.
+- `"blank"` draws no key at all, which is the behaviour of image layers before
+  the key was implemented.
+
+```{r legend-key}
+#| warning: false
+d$group <- rep(c("up", "down"), each = 5)
+key_plot <- ggplot(d, aes(x, y, image = image, colour = group)) +
+    geom_image(size = .08) + theme_void()
+
+options(ggimage.keytype = "rect")
+key_plot
+
+options(ggimage.keytype = "image")
+key_plot + guides(colour = guide_legend(override.aes = list(image = img)))
+
+options(ggimage.keytype = NULL)
+```
+
+With `"point"` and `"rect"` the key follows `colour` and `alpha`, so a colour
+legend still reads as a colour legend. With `"image"` the key is one of the
+pictures, which is the most readable choice when the images *are* the categories
+-- here the two groups are told apart by their pictures rather than by a colour
+swatch. Which picture comes from the layer's `image` argument: ggplot2 has no
+scale to look a per-row `image` up in, so a layer that maps `image` to a column
+can only put the same image in every key, and the chunk above hands one image per
+group to the guide with `override.aes`. The option is global, so set it once for
+the session, or restore the previous value with `options(old)` when you only want
+it for one plot.
+
+## Themes
+
+`theme_transparent()` makes the panel and the legend background transparent, so
+that a plot can be placed on top of something else -- a background image,
+another plot, or a slide with its own colour.
+
+```{r themes-transparent}
+#| warning: false
+p <- ggplot(iris, aes(Petal.Length, Petal.Width, colour = Species)) +
+    geom_point()
+
+## the blue rectangle stands in for whatever is behind the plot
+draw_on <- function(plot) {
+    grid::grid.newpage()
+    grid::grid.rect(gp = grid::gpar(fill = "steelblue", col = NA))
+    print(plot, newpage = FALSE)
+}
+
+draw_on(p)
+
+## the same plot with the theme applied
+draw_on(p + theme_transparent())
+```
+
+`theme_nothing()` keeps only the panel: no axes, no labels, and no margin. It
+is meant for plots that are drawn *inside* another plot, such as the insets
+made by `geom_subview()`, where axes and titles would only be noise.
+
+```{r theme-nothing}
+#| warning: false
+ggplot(iris, aes(Petal.Length, Petal.Width)) + geom_point() + theme_nothing()
+```
+
+## Reading images
+
+`image_read2()` reads an image and, by default, trims the empty margin around
+it. Scans and figures exported from other software often carry a wide white
+border, which would otherwise shrink the drawing itself to a small part of the
+glyph.
+
+```{r image-read2}
+#| warning: false
+## put a white margin around the logo, as a scan or an exported figure has
+bordered <- magick::image_border(magick::image_read(logo), "white", "40x40")
+bf <- tempfile(fileext = ".png")
+magick::image_write(bordered, bf)
+
+rbind(before = magick::image_info(magick::image_read(bf))[, c("width", "height")],
+      after  = magick::image_info(image_read2(bf))[, c("width", "height")])
+```
+
+The trim is based on white pixels on the first three channels, so it also works
+on images with an alpha channel, and it keeps a matte channel intact. An image
+that is entirely white, or one with no margin, is returned unchanged rather than
+being cropped to nothing. Use `cut_empty_space = FALSE` to skip the trim
+entirely, and `...` to pass extra arguments to `magick::image_read()`, for
+instance a `density` for vector files.
+
+## Previewing a plot
+
+`ggpreview()` saves a plot to a file and draws it back into the current device.
+The point is to see the plot at the exact size it will be saved, without
+leaving a file behind: with no `filename` it uses a temporary file that is
+cleaned up at the end of the session.
+
+```{r ggpreview}
+#| warning: false
+ggpreview(plot = ggplot(iris, aes(Petal.Length, Petal.Width)) + geom_point(),
+          width = 4, height = 3)
+```
+
+Give `filename` to keep the file as well, in which case the remaining arguments
+are passed to `ggsave()` -- so `dpi`, `bg` and the other `ggsave()` parameters
+work as usual. It accepts anything `ggplotify` can convert, so a base graphics
+plot or a `grid` object works as well as a `ggplot`.
+
+## The image cache
+
+Reading an image is expensive, and a plot is drawn again on every resize, so
+`ggimage` caches prepared images. The cache is unbounded by default, which is
+fine for a handful of images but not for a plot with thousands of distinct
+ones. `set_image_cache_policy()` bounds it.
+
+```{r image-cache-policy}
+set_image_cache_policy(capacity = 200, ttl = 60, eviction = "lru")
+get_image_cache_policy()[c("base_capacity", "base_ttl", "eviction")]
+```
+
+- `capacity` is the number of entries to keep.
+- `ttl` is a lifetime in seconds, after which an entry is treated as absent.
+- `bytes` is an approximate size cap, measured with `object.size()` plus a
+  pixel-based lower bound for `magick` images. It is a guardrail rather than a
+  measurement of process memory, since the native image buffers are larger than
+  the estimate.
+- `eviction` is one of `"lru"`, `"fifo"` or `"none"`; the last one disables
+  capacity and byte eviction, leaving only `ttl`.
+
+`NULL` leaves an option unchanged, so a single call can adjust one setting
+without disturbing the others. Each value can also be set for the base images
+and for the transformed ones separately, with `base_capacity` /
+`transform_capacity` and so on, which is useful when a plot maps `colour` or
+`angle` and therefore produces many transformed copies of few base images.
+
+`get_image_cache_stats()` reports what the cache is doing, which is the way to
+tell whether a policy is worth its cost.
+
+```{r image-cache-stats}
+#| warning: false
+reset_image_cache_stats()
+ggplot(d, aes(x, y)) + geom_image(aes(image = image), size = .05)
+get_image_cache_stats()$base
+```
+
+The result has a `base` and a `transform` entry, each with `hits`, `misses`,
+`evictions`, `expirations`, `entries` and `bytes`. A high `misses` count with few
+`entries` means the images are not being reused and the cache is not helping;
+`evictions` and `expirations` that climb mean the policy is too tight for the
+plot. `reset_image_cache_stats()` clears the counters without dropping the
+entries; `get_image_cache_diagnostics()` is the same function under a name that
+reads better in debugging code.
+
+```{r image-cache-restore}
+options(ggimage.image_cache_capacity = NULL,
+        ggimage.image_cache_ttl = NULL,
+        ggimage.image_cache_eviction = NULL)
+```

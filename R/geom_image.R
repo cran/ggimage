@@ -31,6 +31,29 @@
 ##'   positive are ignored, and the `size`/`by` behavior is used for the
 ##'   affected image.
 ##' @param ... additional parameters
+##' @section Aesthetics:
+##' `geom_image()` understands the following aesthetics (required aesthetics
+##' are in bold):
+##'
+##' - **`x`**
+##' - **`y`**
+##' - `image`
+##' - `size`
+##' - `width`
+##' - `height`
+##' - `colour`
+##' - `angle`
+##' - `alpha`
+##'
+##' `colour` and `alpha` are applied per row: `colour` tints the image and
+##' `alpha` sets its opacity, so both `aes(colour = ...)` and
+##' `aes(alpha = ...)` work. `alpha` is an ordinary ggplot2 aesthetic, so its
+##' default continuous scale maps the data range onto `[0.1, 1]`; add
+##' `scale_alpha_identity()` to pass the values through unchanged.
+##'
+##' `image` may also be given as a list-column of `magick` images, one image per
+##' row, in addition to a path or a URL per row. Such images are cached by their
+##' content rather than by object identity.
 ##' @return geom layer
 ##' @importFrom ggplot2 layer
 ##' @export
@@ -167,10 +190,12 @@ GeomImage <- ggproto("GeomImage", Geom,
                          )
 
                          grobs <- lapply(seq_len(nrow(data)), function(i){
+                              ## a list column holds one image object per row
+                              image <- image_at(data$image, i)
                               imageGrob(x = data$x[i],
                                         y = data$y[i],
                                         size = data$size[i],
-                                        img = data$image[i],
+                                        img = image,
                                         colour = data$colour[i],
                                         opacity = data$alpha[i],
                                         angle = data$angle[i],
@@ -433,15 +458,31 @@ is_invalid <- function(img) {
   is.null(img) || length(img) == 0 || (is.character(img) && (is.na(img) || img == ""))
 }
 
-# generate stable key: path -> standardized character; object -> digest
-#' @importFrom digest digest
+# generate stable key: path -> standardized character; image object -> content
+# fingerprint; other objects -> digest.  digest() of a magick image hashes its
+# external pointer, so every magick object shares one key and the caches would
+# hand the first image to every other row.
 image_cache_key <- function(img) {
   if (is.character(img)) {
     kp <- tryCatch(normalizePath(img, winslash = "/", mustWork = FALSE),
                    error = function(e) img)
     return(kp)
   }
+  if (methods::is(img, "magick-image")) {
+    key <- magick_image_key(img)
+    if (!is.null(key)) return(key)
+  }
   digest(img)
+}
+
+#' @importFrom digest digest
+magick_image_key <- function(img) {
+  info <- tryCatch(magick::image_info(img), error = function(e) NULL)
+  pixels <- tryCatch(magick::image_write(img, format = "png"),
+                     error = function(e) NULL)
+  if (is.null(info) || is.null(pixels)) return(NULL)
+  paste0("magick:", sum(info$width), "x", sum(info$height), "x",
+         nrow(info), ":", digest(pixels, algo = "sha1"))
 }
 
 # generate transform key based on base_key and transform parameters
@@ -449,13 +490,29 @@ image_fun_cache_key <- function(image_fun) {
   if (is.null(image_fun)) "" else digest(image_fun)
 }
 
+# One component of a transform key.  `prepare_image()` tints only when `colour`
+# is neither NULL nor NA, so NULL, NA and "" all mean "no tint" and must share
+# one key -- but they may not share it with a real colour.  An empty string is
+# the natural spelling of "absent", so a present value is marked with a "v:"
+# prefix: "" and NA keep the empty component they always had, a named colour
+# gets its own, and no colour can spell itself as the marker of another.
+image_transform_component <- function(value) {
+  if (is.null(value) || length(value) == 0L) return("")
+  value <- as.character(value)
+  if (length(value) != 1L || is.na(value)) return("")
+  if (!nzchar(value)) return("")
+  paste0("v:", value)
+}
+
 image_transform_key <- function(base_key, angle, colour, opacity, image_fun = NULL,
                                 image_fun_key = NULL) {
   if (is.null(image_fun_key)) image_fun_key <- image_fun_cache_key(image_fun)
+  ## `angle` keeps its original spelling: no rotation is written as the bare
+  ## "0", so NA, NULL and 0 still share one key exactly as they did before.
   paste(base_key,
         if (is.null(angle) || is.na(angle)) 0 else angle,
-        if (is.null(colour) || is.na(colour)) "" else as.character(colour),
-        if (is.null(opacity) || is.na(opacity)) "" else as.character(opacity),
+        image_transform_component(colour),
+        image_transform_component(opacity),
         image_fun_key, sep = "|")
 }
 
@@ -654,7 +711,12 @@ cache_set_transformed <- function(tkey, value, use_cache = TRUE) {
   invisible(value)
 }
 
-# clean all image cache (and policy metadata)
+##' Clear the image caches and their diagnostics.
+##'
+##' @inherit get_image_cache_stats title
+##' @return `NULL`, invisibly.
+##' @seealso [get_image_cache_stats()] [reset_image_cache_stats()]
+##' @export
 clear_image_cache <- function() {
   tryCatch(rm_cache_item(.IMAGE_CACHE_ITEM), error = function(e) invisible(NULL))
   tryCatch(rm_cache_item(.IMAGE_TRANSFORM_CACHE_ITEM), error = function(e) invisible(NULL))
@@ -739,11 +801,72 @@ apply_image_opacity <- function(img, opacity) {
                    channel = "alpha")
 }
 
+## Vector formats carry no resolution of their own, so the reader has to pick
+## one, and ImageMagick's default of 72 dpi is what made an `.eps` look grainy.
+## Ask for 300 dpi instead.  `image_read()` renders every page of a PDF through
+## its Ghostscript delegate, so the `pdftools`-backed reader this code used for
+## `.pdf` bought nothing and broke the format wherever `pdftools` is missing,
+## which is the common case -- magick only suggests it.  `.svg` had the same
+## flaw: `magick::image_read_svg()` renders through the `rsvg` package, which
+## magick itself only *suggests* and this package never declared, so wherever
+## `rsvg` is absent -- a bare magick install, or a `R CMD check --as-cran`
+## sandbox, whose filtered test library hides every undeclared package --
+## reading an `.svg` errored outright and the image drew as nothing.  Prefer
+## `rsvg` when it is present, and fall back to `image_read()` otherwise: that
+## renders an `.svg` on its own (more coarsely, and it warns about it), and a
+## coarse image beats an error and beats an empty panel.
+.vector_density <- 300
+
+## Separate binding so the fallback can be exercised on machines that do have
+## rsvg installed.
+.has_rsvg <- function() requireNamespace("rsvg", quietly = TRUE)
+
+## The rsvg-less renderer, as its own binding so a test can observe that the
+## fallback ran.  Asserting on output metadata instead would be fragile: ImageMagick
+## builds disagree about what density an SVG render carries (300 where the
+## internal rasteriser honours the request, 118 on Debian's build through the
+## librsvg delegate), so no single value is portable enough to prove which
+## renderer ran.
+.read_svg_without_rsvg <- function(img) {
+    magick::image_read(img, density = .vector_density)
+}
+
+## Dispatch on the extension, case-insensitively: `.EPS` from a Windows export
+## used to miss the vector branches and land on the 72 dpi default.  A query
+## string is only removed to find the extension -- it is part of the reference
+## for a signed URL, and part of the name for a local file.
+.read_image_file <- function(img) {
+    ext <- tolower(tools::file_ext(sub("[?#].*$", "", img)))
+    image <- switch(ext,
+           "svg" = if (.has_rsvg()) {
+               magick::image_read_svg(img)
+           } else {
+               .read_svg_without_rsvg(img)
+           },
+           "pdf" = ,
+           "eps" = ,
+           "ps" = magick::image_read(img, density = .vector_density),
+           magick::image_read(img))
+    ## every page of a vector document comes back as its own frame, and a
+    ## raster grob draws one image
+    if (length(image) > 1L) image[1] else image
+}
+
 prepare_image <- function(img, colour, opacity, angle, image_fun, use_cache = TRUE,
                           image_fun_key = NULL) {
   tryCatch({
     if (is_invalid(img)) {
       warning("Invalid image path or object provided: ", paste(img, collapse=","))
+      return(NULL)
+    }
+
+    ## `alpha = NA` names no opacity, so the row is drawn as nothing rather
+    ## than silently promoted to fully opaque.  This matches the contract of an
+    ## unreadable image and of `size = NA` (dropped with a warning): the other
+    ## rows keep their own images, and the batch keeps this slot NULL so a
+    ## skipped row cannot shift the rows after it.
+    if (length(opacity) == 1L && is.na(opacity)) {
+      warning("Invalid alpha value provided: NA")
       return(NULL)
     }
 
@@ -757,10 +880,7 @@ prepare_image <- function(img, colour, opacity, angle, image_fun, use_cache = TR
     if (is.null(cached_img)) {
       if (!methods::is(img, "magick-image")) {
         if (is.character(img)) {
-          cached_img <- switch(tools::file_ext(img),
-                               "svg" = magick::image_read_svg(img),
-                               "pdf" = magick::image_read_pdf(img),
-                               magick::image_read(img))
+          cached_img <- .read_image_file(img)
         } else {
           warning("Unexpected img type: ", class(img))
           return(NULL)
@@ -816,6 +936,15 @@ prepare_image <- function(img, colour, opacity, angle, image_fun, use_cache = TR
   })
 }
 
+## Extract row `i` from an image column.  A list-column carries one image
+## object per row and needs `[[`; an atomic vector of paths or URLs needs `[`.
+## The choice is made from the container, not the element: `[` on a
+## list-column hands back the one-element wrapper rather than the object,
+## which prepare_image() would reject as an unexpected type.
+image_at <- function(images, i) {
+  if (is.list(images) && !is.data.frame(images)) images[[i]] else images[i]
+}
+
 # Prepare each distinct image transform once within one panel draw.  This memo
 # is intentionally local to the call: it supplements, but does not alter, the
 # process-global image caches or their use_cache semantics.
@@ -840,6 +969,7 @@ prepare_image_batch <- function(img, colour = NULL, opacity = 1, angle = 0,
   if (is.null(image_fun_key)) image_fun_key <- image_fun_cache_key(image_fun)
   memo <- new.env(hash = TRUE, parent = emptyenv())
   path_keys <- new.env(hash = TRUE, parent = emptyenv())
+  seen_objects <- list()
   prepared <- vector("list", n)
 
   image_key <- function(value) {
@@ -847,7 +977,10 @@ prepare_image_batch <- function(img, colour = NULL, opacity = 1, angle = 0,
     ## row. Normalize each distinct path at most once in this panel.
     if (is.character(value) && length(value) == 1L) {
       path <- value[[1L]]
-      path_id <- if (is.na(path)) "<NA>" else path
+      ## `exists("")` is an error, and neither value can name a file
+      if (is.na(path)) return("character:<NA>")
+      if (!nzchar(path)) return("character:<empty>")
+      path_id <- path
       if (exists(path_id, envir = path_keys, inherits = FALSE)) {
         return(get(path_id, envir = path_keys, inherits = FALSE))
       }
@@ -859,28 +992,36 @@ prepare_image_batch <- function(img, colour = NULL, opacity = 1, angle = 0,
       assign(path_id, key, envir = path_keys)
       return(key)
     }
-    tryCatch(
-      paste0("object:", digest(value)),
-      error = function(e) paste0("object-error:", typeof(value), ":", length(value))
-    )
+    ## Image objects are keyed by reference: digest() of one hashes its
+    ## external pointer, which is the same value for every magick image.
+    hit <- which(vapply(seen_objects, function(seen) identical(seen$image, value),
+                        logical(1)))
+    if (length(hit)) return(seen_objects[[hit[[1L]]]]$key)
+    key <- paste0("object:", length(seen_objects) + 1L)
+    seen_objects[[length(seen_objects) + 1L]] <<- list(image = value, key = key)
+    key
   }
 
   for (i in seq_len(n)) {
+    image <- image_at(img, i)
     key <- image_transform_key(
-      image_key(img[i]), angle[i], colour[i], opacity[i],
+      image_key(image), angle[i], colour[i], opacity[i],
       image_fun = image_fun, image_fun_key = image_fun_key
     )
     if (exists(key, envir = memo, inherits = FALSE)) {
-      prepared[[i]] <- get(key, envir = memo, inherits = FALSE)
+      prepared[i] <- list(get(key, envir = memo, inherits = FALSE))
       next
     }
     value <- prepare_image(
-      img = img[i], colour = colour[i], opacity = opacity[i],
+      img = image, colour = colour[i], opacity = opacity[i],
       angle = angle[i], image_fun = image_fun, use_cache = use_cache,
       image_fun_key = if (use_cache) image_fun_key else NULL
     )
+    ## `[[<-` with NULL drops the slot and shortens the list, so a row whose
+    ## image could not be read would shift every later row and finally run
+    ## past the end when the grobs are built.
     assign(key, value, envir = memo)
-    prepared[[i]] <- value
+    prepared[i] <- list(value)
   }
   prepared
 }
@@ -889,13 +1030,10 @@ prepare_image_batch <- function(img, colour = NULL, opacity = 1, angle = 0,
 
 ##' @importFrom magick image_read
 ##' @importFrom magick image_read_svg
-##' @importFrom magick image_read_pdf
 ##' @importFrom magick image_transparent
 ##' @importFrom magick image_rotate
 ##' @importFrom grid rasterGrob
 ##' @importFrom grid viewport
-##' @importFrom grDevices rgb
-##' @importFrom grDevices col2rgb
 ##' @importFrom methods is
 ##' @importFrom tools file_ext
 ##' @importFrom yulab.utils get_cache_element update_cache_item rm_cache_item get_cache_item
@@ -903,7 +1041,7 @@ imageGrob <- function(x, y, size, img, colour, opacity, angle, adj, image_fun, h
                      asp=1, default.units='native', use_cache=TRUE,
                      width = NA_real_, height = NA_real_, image_fun_key = NULL,
                      prepared_image = NULL, prepared = FALSE) {
-  if (is.na(img)) {
+  if (is.character(img) && (length(img) != 1L || is.na(img))) {
     return(zeroGrob())
   }
 

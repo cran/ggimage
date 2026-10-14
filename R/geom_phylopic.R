@@ -40,7 +40,13 @@ download_phylopic <- function(id, destdir = ".", ..., reuse = TRUE,
     names(destfile) <- names(url)
 
     valid <- !is.na(url) & nzchar(url)
-    destfile[valid] <- paste0(destdir, '/', id[valid], n[valid])
+    ## Key the destination on the RESOLVED image rather than on the input
+    ## string: a name and its uid then share one file instead of downloading
+    ## the same image twice, and no input can put a separator or a space into
+    ## the file name.  `.phylopic_dest_name()` falls back to a digest of the
+    ## input when the URL does not carry a usable uid.
+    destfile[valid] <- file.path(destdir,
+                                 .phylopic_dest_name(url[valid], id[valid]))
     pending <- which(valid)
     if (!length(pending)) return(invisible(destfile))
 
@@ -113,18 +119,123 @@ download_phylopic <- function(id, destdir = ".", ..., reuse = TRUE,
            !is.na(info$isdir) && !info$isdir)
 }
 
+## One file name per distinct downloaded image.  PhyloPic vector URLs look
+## like ".../images/<uid>/vector.svg", so the uid is the parent directory of
+## the file name; the extension of the URL is kept.  Anything that does not
+## yield a usable uid -- a mocked URL, a local file, an unexpected shape --
+## falls back to a digest of the input, which is still stable across calls and
+## still free of separators.
+.phylopic_dest_name <- function(url, input) {
+    url <- as.character(url)
+    input <- as.character(input)
+    ext <- sub("^.*\\.([^./]+)(?:\\?.*)?$", "\\1", basename(url))
+    ## `sub()` returns the input unchanged when it does not match, which would
+    ## silently reuse the whole URL as an extension.
+    no_ext <- !grepl("\\.", basename(url))
+    ext[no_ext] <- "svg"
+    ext[is.na(ext) | !nzchar(ext)] <- "svg"
+
+    uid <- basename(dirname(url))
+    ## A real uid is a UUID; anything else is not the image identity.
+    ok <- !is.na(uid) & grepl("^[A-Za-z0-9_-]+$", uid) &
+        uid != "." & uid != ".." & uid != "/"
+
+    out <- character(length(url))
+    out[ok] <- paste0(uid[ok], ".", ext[ok])
+    if (any(!ok)) {
+        for (i in which(!ok)) {
+            out[[i]] <- paste0("phylopic-", digest::digest(input[[i]]),
+                               ".", ext[[i]])
+        }
+    }
+    out
+}
+
 .phylopic_lock_acquire <- function(lockdir, timeout, poll) {
-    if (dir.create(lockdir, showWarnings = FALSE, recursive = FALSE)) {
+    if (.phylopic_lock_create(lockdir)) {
+        return(TRUE)
+    }
+    ## An abandoned lock -- its owner died, or a leftover from an older build --
+    ## is never going to release itself, so claim it for this process before
+    ## waiting on anyone.
+    if (.phylopic_lock_stale(lockdir) && .phylopic_lock_takeover(lockdir)) {
         return(TRUE)
     }
     started <- as.numeric(Sys.time())
     repeat {
-        if (dir.create(lockdir, showWarnings = FALSE, recursive = FALSE)) {
+        if (.phylopic_lock_create(lockdir)) {
             return(TRUE)
         }
-        if (as.numeric(Sys.time()) - started >= timeout) return(FALSE)
+        if (as.numeric(Sys.time()) - started >= timeout) {
+            ## the owner may have died while this call waited
+            if (.phylopic_lock_stale(lockdir) &&
+                .phylopic_lock_takeover(lockdir)) {
+                return(TRUE)
+            }
+            return(FALSE)
+        }
         Sys.sleep(poll)
     }
+}
+
+## The lock is a directory stamped with its owner's PID.  The stamp is written
+## as the lock is created, so a lock without a usable stamp can only be a
+## leftover of an interrupted process.
+.phylopic_lock_create <- function(lockdir) {
+    if (!dir.create(lockdir, showWarnings = FALSE, recursive = FALSE)) {
+        return(FALSE)
+    }
+    tryCatch(writeLines(as.character(Sys.getpid()), file.path(lockdir, "pid")),
+             error = function(e) NULL)
+    TRUE
+}
+
+## Remove a lock that looks abandoned, then re-create it stamped with this
+## process' PID.  Racing takers resolve by who creates the directory first.
+.phylopic_lock_takeover <- function(lockdir) {
+    unlink(lockdir, recursive = TRUE, force = TRUE)
+    .phylopic_lock_create(lockdir)
+}
+
+## The lock holds its owner's PID.  It is stale when that PID is gone, or the
+## stamp is missing or unreadable -- e.g. a lock left by a build that predates
+## the stamp, or was interrupted before it -- or when the stamp carries this
+## very process' PID, or when the lock is older than a generous ceiling, in
+## case a process with that PID lives on unrelated to this download.  On
+## Windows, where liveness cannot be probed without killing the process, a
+## foreign lock is judged by age alone.
+.phylopic_lock_stale <- function(lockdir, max_age = 3600) {
+    stamp <- tryCatch(readLines(file.path(lockdir, "pid"), warn = FALSE),
+                      error = function(e) NULL, warning = function(w) NULL)
+    if (length(stamp) != 1L) return(TRUE)
+    pid <- suppressWarnings(as.integer(stamp))
+    if (is.na(pid) || pid <= 0L) return(TRUE)
+    if (pid == Sys.getpid()) return(TRUE)
+    if (.Platform$OS.type != "windows" && !.phylopic_pid_alive(pid)) {
+        return(TRUE)
+    }
+    born <- tryCatch(file.info(file.path(lockdir, "pid"))$mtime,
+                     error = function(e) NULL)
+    if (is.null(born) || is.na(born)) return(FALSE)
+    as.numeric(Sys.time()) - as.numeric(born) > max_age
+}
+
+## Is the process running?  `ps` answers by its exit status, and neither form
+## touches the process.  (tools::pskill cannot be used: it is silent about a
+## missing process -- there is nothing to signal -- so it answers "alive" to
+## everything, and on Windows it ignores the signal and kills the process.)
+## Where no safe probe exists, report "alive" and let the age ceiling collect
+## the lock instead.
+.phylopic_pid_alive <- function(pid) {
+    if (.Platform$OS.type == "windows") {
+        return(TRUE)
+    }
+    status <- suppressWarnings(
+        system2("ps", c("-p", pid, "-o", "pid="), stdout = FALSE, stderr = FALSE))
+    if (!is.numeric(status) || length(status) != 1L || is.na(status)) {
+        return(TRUE)
+    }
+    status == 0
 }
 
 .phylopic_download <- function(url, destfile, ...) {
@@ -151,6 +262,12 @@ phylopic <- function(id) {
     if (is.null(basepath)){
         basepath <- "https://images.phylopic.org/images/"
     }
+    ## the option names a directory, so it composes with the id the same way no
+    ## matter whether the caller wrote the trailing slash; without it, "dir" and
+    ## an id joined to paste0 produce "dir<id>", which is not a URL anyone serves
+    if (!grepl("/$", basepath)) {
+        basepath <- paste0(basepath, "/")
+    }
 
     id <- .autocomplete_uid(x = id)
 
@@ -158,8 +275,11 @@ phylopic <- function(id) {
     ## GeomImage already treats NA images as zero-width grobs.
     url <- rep(NA_character_, length(id))
     names(url) <- names(id)
+    reference <- .phylopic_is_reference(id)
     valid <- !is.na(id) & nzchar(id)
-    url[valid] <- paste0(basepath, id[valid], "/vector.svg")
+    url[valid & !reference] <- paste0(basepath, id[valid & !reference],
+                                      "/vector.svg")
+    url[reference] <- id[reference]
 
     return(url)
 
@@ -215,6 +335,14 @@ phylopic <- function(id) {
     invisible(NULL)
 }
 
+## A value that already points at an image -- a local file such as the ones
+## download_phylopic() returns, or an absolute URL -- needs no lookup and is
+## drawn as it stands.
+.phylopic_is_reference <- function(x) {
+    !is.na(x) & nzchar(x) & (grepl("^[a-zA-Z][-+.a-zA-Z0-9]*://", x) |
+                             file.exists(x))
+}
+
 .autocomplete_uid <- function(x){
     input_names <- names(x)
     x <- as.character(x)
@@ -226,9 +354,11 @@ phylopic <- function(id) {
 
     key <- .phylopic_lookup_key(x)
     missing <- is.na(x) | !nzchar(trimws(x))
+    reference <- .phylopic_is_reference(x)
+    result[reference] <- x[reference]
     uuid <- vapply(seq_along(x), function(index) {
         i <- x[[index]]
-        if (missing[[index]]) {
+        if (missing[[index]] || reference[[index]]) {
             FALSE
         } else {
             x1 <- strsplit(i, split = '-', fixed = TRUE)[[1]]
@@ -238,7 +368,7 @@ phylopic <- function(id) {
     }, logical(1))
     result[uuid] <- x[uuid]
 
-    lookup <- which(!missing & !uuid)
+    lookup <- which(!missing & !uuid & !reference)
     if (length(lookup) == 0L) {
         return(result)
     }
@@ -274,26 +404,48 @@ phylopic <- function(id) {
 ##' @export
 autocomplete_name <- function(name, ...){
     x <- lapply(name, .autocomplete_name_search)
-    x <- do.call('rbind', x)
+    x <- .autocomplete_name_bind(x)
     return(x)
 }
 
+## A name that matches nothing contributes a zero-row (or all-NA) result rather
+## than aborting the batch, so the names that did match are still returned.
 .autocomplete_name_search <- function(name, ...){
     x <- gsub("[^a-zA-Z]+", "%20", tolower(name))
     url <- paste0('https://api.phylopic.org/autocomplete?query=', x)
     res <- suppressWarnings(tryCatch(jsonlite::fromJSON(url),
                     error = function(e) return(NULL)))
     if (is.null(res) || length(res$matches)==0){
-         stop(paste0("No matching names found for ", name, ". \n",
+         warning(paste0("No matching names found for ", name, ". \n",
                     "Ensure provided name is a valid taxonomic name or ",
                     "try a species/genus resolution name."
-                    )
-         )
+                    ), call. = FALSE)
+         x <- data.frame(name = as.character(name), match_name = NA_character_,
+                         stringsAsFactors = FALSE)
     }else{
         x <- res$matches
+        x <- data.frame(name = name, match_name = x, stringsAsFactors = FALSE)
     }
-    x <- data.frame(name=name, match_name=x)
     return(x)
+}
+
+## `do.call(rbind, x)` refuses frames with different columns, which turned one
+## partial response into a failure of the whole call.  Union the columns and
+## fill the missing ones with NA instead; an empty list yields no rows.
+.autocomplete_name_bind <- function(x) {
+    x <- x[!vapply(x, is.null, logical(1))]
+    if (length(x) == 0L) {
+        return(data.frame(name = character(), match_name = character(),
+                          stringsAsFactors = FALSE))
+    }
+    columns <- unique(unlist(lapply(x, names), use.names = FALSE))
+    rows <- lapply(x, function(frame) {
+        frame <- as.data.frame(frame, stringsAsFactors = FALSE)
+        missing <- setdiff(columns, names(frame))
+        for (column in missing) frame[[column]] <- NA
+        frame[columns]
+    })
+    do.call(rbind, rows)
 }
 
 # phylopic_valid_id <- function(id) {

@@ -108,11 +108,23 @@ assign("sequence", 0L, envir = .url_validation_cache_meta)
     invisible(NULL)
 }
 
+## Sentinel for "this URL could not be checked at all", as distinct from a
+## status code and from a failed request.
+.URL_UNCHECKED <- -1L
+.url_warning_env <- new.env(parent = emptyenv())
+
 .url_request <- function(url, timeout) {
-    ## httr remains a Suggests dependency.  URL validation is therefore
-    ## deliberately optional: callers get FALSE when it is unavailable.
+    ## httr remains a Suggests dependency.  Without it a remote image cannot be
+    ## checked here at all, and calling it broken would drop every image and
+    ## blame the path for it; magick reads the URL itself and reports the real
+    ## reason.
     if (!requireNamespace("httr", quietly = TRUE)) {
-        return(NA_integer_)
+        if (!isTRUE(.url_warning_env$no_httr)) {
+            .url_warning_env$no_httr <- TRUE
+            warning("`httr` is not installed, so remote images are not checked ",
+                    "before they are downloaded", call. = FALSE)
+        }
+        return(.URL_UNCHECKED)
     }
 
     response <- httr::HEAD(url, httr::timeout(timeout))
@@ -157,6 +169,10 @@ url.exists <- function(url,
             error = function(e) NA_integer_
         )
 
+        if (identical(status, .URL_UNCHECKED)) {
+            ## nothing was checked, so nothing was found broken either
+            return(TRUE)
+        }
         if (identical(status, 200L)) {
             if (use_cache) .url_cache_set(as.character(url), policy, now)
             return(TRUE)
@@ -199,17 +215,40 @@ check_url <- function(url, url_exists = url.exists, ...) {
     url
 }
 
-get_github_files <- function(owner, repo, path, branch = "main") {
+## A directory is listed through the trees API, which serves every entry of one
+## directory in a single response and reports giving up in its `truncated`
+## flag.  The contents API, the obvious choice, caps a directory at 1000
+## entries and returns the truncated listing silently -- `list.icon()` loses
+## 357 of the 1357 icons that way.  A huge directory can still be truncated by
+## the trees API, so that case is warned about rather than returned as if it
+## were complete.
+get_github_files <- function(owner, repo, path, branch = "main",
+                             request = jsonlite::fromJSON) {
     url <- paste0(
     "https://api.github.com/repos/",
     owner, "/", repo,
-    "/contents/", path,
-    "?ref=", branch
+    "/git/trees/", branch, ":", path
   )
-  
-  res <- jsonlite::fromJSON(url)
-  
-  return(res$name)
+
+  ## A rate limit, an offline machine or a rename all come back as a parse
+  ## failure; name the URL so the cause is recognizable.
+  res <- tryCatch(request(url),
+                  error = function(e) {
+                      stop("could not read the GitHub listing at ", url, ": ",
+                           conditionMessage(e), call. = FALSE)
+                  })
+
+  if (isTRUE(res$truncated)) {
+      warning("GitHub truncated the listing for ", owner, "/", repo, "/", path,
+              "; the list is incomplete", call. = FALSE)
+  }
+
+  entries <- res$tree
+  if (is.null(entries)) {
+      character(0)
+  } else {
+      basename(as.data.frame(entries, stringsAsFactors = FALSE)$path)
+  }
 }
 
 zeroGrob <- function() .zeroGrob
